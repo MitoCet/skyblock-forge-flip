@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Skyblock Forge Flip</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js" defer></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Skyblock Forge Flip</h1>
+      <p class="muted" id="dataAge">Veriler yükleniyor…</p>
+    </div>
+    <div class="player-chip" id="playerChip"></div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="best">En kârlı</button>
+    <button class="tab" data-tab="compare">Karşılaştır <span id="compareCount" class="badge">0</span></button>
+    <button class="tab" data-tab="settings">Profil ve ayarlar</button>
+  </nav>
+
+  <main>
+    <section id="tab-best" class="panel active">
+      <div class="controls">
+        <input id="search" type="search" placeholder="Item ara…">
+        <label>Pazar
+          <select id="market">
+            <option value="all">Hepsi</option>
+            <option value="bazaar">Sadece Bazaar</option>
+            <option value="ah">Sadece Auction House</option>
+          </select>
+        </label>
+        <label>Sırala
+          <select id="sort">
+            <option value="hour">Saatlik kâr</option>
+            <option value="item">Item başına kâr</option>
+            <option value="margin">Kâr oranı (%)</option>
+            <option value="cost">Maliyet</option>
+            <option value="time">Forge süresi</option>
+          </select>
+        </label>
+        <label class="check"><input id="hideMissing" type="checkbox" checked> Fiyatı eksik olanları gizle</label>
+        <label class="check"><input id="hideLoss" type="checkbox"> Zarar edenleri gizle</label>
+      </div>
+      <div class="table-wrap">
+        <table id="bestTable">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Item</th>
+              <th>Pazar</th>
+              <th class="num">Maliyet</th>
+              <th class="num">Satış (net)</th>
+              <th class="num">Kâr / item</th>
+              <th class="num">Süre</th>
+              <th class="num">Kâr / saat</th>
+              <th class="num" title="Bazaar: son 7 günde anında alınan adet. AH: şu anki BIN ilan sayısı.">Talep</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small">Satırın solundaki kutu itemi karşılaştırmaya ekler. Detay ve fiyat grafikleri için satıra tıkla.</p>
+    </section>
+
+    <section id="tab-compare" class="panel">
+      <div id="compareEmpty" class="empty">Henüz item seçmedin. "En kârlı" listesinde satırların solundaki kutuları işaretle.</div>
+      <div id="compareBody" hidden>
+        <div class="table-wrap"><table id="compareTable"></table></div>
+        <div class="chart-card">
+          <div class="chart-head">
+            <h3>Kâr / item geçmişi</h3>
+            <div class="range" data-target="compare"></div>
+          </div>
+          <div class="chart-box"><canvas id="compareChart"></canvas></div>
+          <p class="muted small" id="compareNote"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="panel">
+      <div class="cards">
+        <div class="card">
+          <h3>Profilden çek</h3>
+          <label>Minecraft kullanıcı adı <input id="username" autocomplete="off"></label>
+          <label>Hypixel API anahtarı
+            <input id="apiKey" type="password" autocomplete="off" placeholder="developer.hypixel.net'ten aldığın anahtar">
+          </label>
+          <p class="muted small">Anahtar sadece bu tarayıcıda saklanır ve sadece api.hypixel.net'e gönderilir.</p>
+          <label id="profileSelectWrap" hidden>Profil <select id="profileSelect"></select></label>
+          <button id="fetchProfile" class="primary">Profili çek</button>
+          <p id="profileStatus" class="small"></p>
+        </div>
+        <div class="card">
+          <h3>Forge ayarları</h3>
+          <label class="check"><input id="manualMode" type="checkbox"> Profil yerine elle girdiğim değerleri kullan</label>
+          <label>Forge slot sayısı <input id="slots" type="number" min="1" max="7"></label>
+          <label>Quick Forge seviyesi (0–20) <input id="qfLevel" type="number" min="0" max="20"></label>
+          <label>Bazaar satış vergisi (%) <input id="bzTax" type="number" min="0" max="5" step="0.025"></label>
+          <p class="muted small" id="effectiveInfo"></p>
+        </div>
+        <div class="card">
+          <h3>Elle girilen fiyatlar</h3>
+          <p class="muted small">Bir itemin detayından o item için kendi fiyatını girebilirsin. Elle girilen fiyat Hypixel fiyatının yerine geçer.</p>
+          <ul id="overrideList" class="plain"></ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="detail">
+    <div class="dialog-head">
+      <h2 id="detailTitle"></h2>
+      <button id="closeDetail" class="ghost" aria-label="Kapat">✕</button>
+    </div>
+    <div id="detailSummary" class="stats"></div>
+    <h3>Malzemeler</h3>
+    <div class="table-wrap"><table id="detailInputs"></table></div>
+    <div class="chart-card">
+      <div class="chart-head">
+        <h3>Fiyat geçmişi</h3>
+        <div class="range" data-target="detail"></div>
+      </div>
+      <label>Grafik <select id="detailSeries"></select></label>
+      <div class="chart-box"><canvas id="detailChart"></canvas></div>
+      <p class="muted small" id="detailNote"></p>
+    </div>
+  </dialog>
+</body>
+</html>
