@@ -15,7 +15,7 @@ const DEFAULTS = {
   apiKey: '', username: '', profileId: '',
   auto: null, // { slots, qfLevel, hotmTier, profileName, fetchedAt }
   manualMode: false, slots: 2, qfLevel: 0, bzTax: 1.25,
-  market: 'all', sort: 'hour', hideMissing: true, hideLoss: false,
+  market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   compare: [], overrides: {}, range: 7,
 };
 let S = load();
@@ -30,6 +30,7 @@ function effective() {
   const a = !S.manualMode && S.auto;
   return { slots: a ? a.slots : S.slots, qfLevel: a ? a.qfLevel : S.qfLevel };
 }
+const QUICK_SECONDS = 600; // forges shorter than this are capped by market demand, not time
 const qfPercent = (lvl) => (lvl <= 0 ? 0 : lvl >= 20 ? 30 : 10 + lvl * 0.5);
 
 // ---------- formatting ----------
@@ -142,6 +143,7 @@ function rows() {
   let list = recipes.map(evaluate);
   if (S.market !== 'all') list = list.filter((e) => e.sale.market === S.market);
   if (S.hideMissing) list = list.filter((e) => !e.missing);
+  if (S.sort === 'hour' && !S.showQuick) list = list.filter((e) => e.time >= QUICK_SECONDS);
   if (S.hideLoss) list = list.filter((e) => e.profit == null || e.profit > 0);
   if (q) list = list.filter((e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
   const key = { hour: 'perHour', item: 'profit', margin: 'margin', cost: 'cost', time: 'time' }[S.sort];
@@ -162,7 +164,7 @@ function renderBest() {
     const checked = S.compare.includes(e.id) ? 'checked' : '';
     const market = e.sale.market === 'bazaar' ? 'Bazaar' : e.sale.market === 'ah' ? 'AH' : '?';
     const demand = demandText(e);
-    const quick = e.time < 600 ? ' <span class="tag" title="Çok kısa forge süresi: saatlik kâr ancak bu kadar alıcı bulursan gerçekleşir.">kısa</span>' : '';
+    const quick = e.time < QUICK_SECONDS ? ' <span class="tag" title="Çok kısa forge süresi: saatlik kâr ancak bu kadar alıcı bulursan gerçekleşir.">kısa</span>' : '';
     const manual = e.sale.src === 'manual' || e.inputs.some((i) => i.src === 'manual') ? ' <span class="tag">elle</span>' : '';
     return `<tr data-id="${esc(e.id)}">
       <td><input type="checkbox" class="cmp" ${checked} aria-label="Karşılaştırmaya ekle"></td>
@@ -464,7 +466,7 @@ function wire() {
     document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${t.dataset.tab}`));
     if (t.dataset.tab === 'compare') renderCompare();
   }));
-  for (const [id, key, kind] of [['#market', 'market'], ['#sort', 'sort'], ['#hideMissing', 'hideMissing', 'check'], ['#hideLoss', 'hideLoss', 'check']]) {
+  for (const [id, key, kind] of [['#market', 'market'], ['#sort', 'sort'], ['#hideMissing', 'hideMissing', 'check'], ['#hideLoss', 'hideLoss', 'check'], ['#showQuick', 'showQuick', 'check']]) {
     const el = $(id);
     if (kind === 'check') el.checked = S[key]; else el.value = S[key];
     el.addEventListener('change', () => { S[key] = kind === 'check' ? el.checked : el.value; save(); renderBest(); });
