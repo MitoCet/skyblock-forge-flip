@@ -11,8 +11,8 @@ Hypixel Skyblock'taki forge tariflerinin hangisinin en çok kâr getirdiğini g�
 
 | | Kaynak |
 |---|---|
-| Malzeme maliyeti | Bazaar anında alım (satış emirleri gerekli adet kadar taranır). Bazaar'da yoksa AH lowest BIN. |
-| Satış (Bazaar) | Sell offer: en düşük satış emrinin 0.1 altı, eksi Bazaar vergisi (varsayılan %1.25, ayarlardan değişir). |
+| Malzeme maliyeti | Seçime göre Bazaar anında alım (satış emirleri gerekli adet kadar taranır) ya da buy order (en yüksek alış emrinin 0.1 üstü). Bazaar'da yoksa AH lowest BIN. |
+| Satış (Bazaar) | Seçime göre sell offer (en düşük satış emrinin 0.1 altı) ya da anında satış (en yüksek alış emri), eksi Bazaar vergisi (varsayılan %1.25, ayarlardan değişir). |
 | Satış (AH) | Lowest BIN, eksi ilan ücreti (%1 / %2 / %2.5) ve 1M üstü için %1 tahsil vergisi. |
 | Süre | Tarif süresi, Quick Forge indirimiyle (seviye başına %10 + %0.5, seviye 20'de %30). |
 | Kâr / saat | Item başına kâr ÷ forge süresi (tek slot). Günlük kâr slot sayınla çarpılır. 10 dakikadan kısa süren forgelar saatlik sıralamada varsayılan olarak gizlenir, çünkü o hızda satacak alıcı bulunmaz. |

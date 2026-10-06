@@ -16,6 +16,7 @@ const DEFAULTS = {
   auto: null, // { slots, qfLevel, hotmTier, profileName, fetchedAt }
   manualMode: false, slots: 2, qfLevel: 0, bzTax: 1.25,
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
+  buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
 };
 let S = load();
@@ -74,11 +75,16 @@ function history(id) {
 }
 const nameOf = (id) => names[id] || id;
 
-// Price to buy `qty` of an input right now, walking the Bazaar sell orders.
+// Price to buy `qty` of an input: a buy order just above the best one, or an
+// instant buy that walks the Bazaar sell orders.
 function buyCost(id, qty) {
   if (id === COIN) return { total: qty, unit: 1, src: 'coin' };
   if (S.overrides[id] != null) return { total: S.overrides[id] * qty, unit: S.overrides[id], src: 'manual' };
   const b = latest.bazaar[id];
+  if (b && S.buyMode === 'order' && b.bid) {
+    const unit = b.bid + 0.1;
+    return { total: unit * qty, unit, src: 'bazaar-order' };
+  }
   if (b && b.ask) {
     let left = qty, total = 0;
     for (const [price, amount] of b.asks || []) {
@@ -100,13 +106,23 @@ function ahFee(price) {
   return price * (listing + claim);
 }
 
-// Net coins from selling one forge result: Bazaar sell offer (undercut by 0.1) or AH lowest BIN.
+// Bazaar unit sale price: a sell offer undercuts the lowest sell order by 0.1,
+// an instant sell fills the highest buy order.
+const bzSellUnit = (ask, bid) => (S.sellMode === 'instant' ? bid ?? (ask != null ? ask - 0.1 : null) : ask != null ? ask - 0.1 : bid);
+const bzBuyUnit = (ask, bid) => (S.buyMode === 'order' && bid != null ? bid + 0.1 : ask);
+
+// Net coins from selling one forge result on the Bazaar or at AH lowest BIN.
 function saleValue(id, count) {
   const b = latest.bazaar[id];
   const manual = S.overrides[id];
   if (b && (b.ask || b.bid || manual != null)) {
-    const unit = manual ?? (b.ask ? b.ask - 0.1 : b.bid);
-    return { market: 'bazaar', unit, net: unit * count * (1 - S.bzTax / 100), demand: b.buyWeek, src: manual != null ? 'manual' : 'bazaar' };
+    const unit = manual ?? bzSellUnit(b.ask, b.bid);
+    return {
+      market: 'bazaar', unit, net: unit * count * (1 - S.bzTax / 100),
+      // Sell offers are filled by instant buyers; instant sells need buy orders.
+      demand: S.sellMode === 'instant' ? b.sellWeek : b.buyWeek,
+      src: manual != null ? 'manual' : S.sellMode === 'instant' ? 'bazaar-instant' : 'bazaar',
+    };
   }
   const a = latest.ah[id];
   if (a || manual != null) {
@@ -181,10 +197,13 @@ function renderBest() {
 }
 
 // ---------- history helpers ----------
-// Unit price series for an item: Bazaar uses the lowest sell order (ask), AH the lowest BIN.
-function priceSeries(h) {
+// Unit price series. Bazaar points are [ts, ask, bid]; AH points are [ts, lowestBin, listings].
+// `pick` turns a Bazaar (ask, bid) pair into the price wanted.
+function priceSeries(h, pick = (ask) => ask) {
   if (!h) return [];
-  return h.points.map((p) => [p[0], p[1] ?? p[2]]).filter((p) => p[1] != null);
+  return h.points
+    .map((p) => [p[0], h.market === 'bazaar' ? pick(p[1], p[2]) : p[1]])
+    .filter((p) => p[1] != null);
 }
 
 // Profit-per-item over time, from snapshots that every ingredient shares.
@@ -192,9 +211,9 @@ async function profitSeries(r) {
   const ids = [r.id, ...r.inputs.filter((i) => i.id !== COIN).map((i) => i.id)];
   const hs = await Promise.all(ids.map(history));
   if (hs.some((h) => !h)) return [];
-  const maps = hs.map((h) => new Map(priceSeries(h)));
+  const maps = hs.map((h) => new Map(priceSeries(h, bzBuyUnit)));
   const out = [];
-  for (const [ts, outPrice] of priceSeries(hs[0])) {
+  for (const [ts, outPrice] of priceSeries(hs[0], bzSellUnit)) {
     let cost = 0, ok = true;
     r.inputs.forEach((inp) => {
       if (inp.id === COIN) { cost += inp.count; return; }
@@ -204,7 +223,7 @@ async function profitSeries(r) {
     if (!ok) continue;
     const unit = S.overrides[r.id] ?? outPrice;
     const net = hs[0].market === 'bazaar'
-      ? (unit - 0.1) * r.count * (1 - S.bzTax / 100)
+      ? unit * r.count * (1 - S.bzTax / 100)
       : unit * r.count - ahFee(unit * r.count);
     out.push([ts, net - cost]);
   }
@@ -274,7 +293,7 @@ async function openDetail(id) {
   const cls = e.profit == null ? '' : e.profit >= 0 ? 'pos' : 'neg';
   $('#detailSummary').innerHTML = [
     stat('Maliyet', coins(e.cost)),
-    stat(e.sale.market === 'ah' ? 'Satış (lowest BIN, net)' : 'Satış (sell offer, net)', coins(e.sale.net)),
+    stat(`Satış (${saleLabel(e)}, net)`, coins(e.sale.net)),
     stat('Kâr / item', coins(e.profit), cls),
     stat('Forge süresi', duration(e.time)),
     stat('Kâr / saat (1 slot)', coins(e.perHour), cls),
@@ -285,10 +304,10 @@ async function openDetail(id) {
   $('#detailInputs').innerHTML = `<thead><tr><th>Malzeme</th><th class="num">Adet</th><th class="num">Birim fiyat</th><th class="num">Toplam</th><th>Kaynak</th><th>Elle fiyat</th></tr></thead><tbody>
     ${e.inputs.map((i) => `<tr><td>${esc(nameOf(i.id))}</td><td class="num">${i.count.toLocaleString('tr-TR')}</td>
       <td class="num">${coins(i.unit)}</td><td class="num">${coins(i.total)}</td>
-      <td><span class="tag">${{ coin: 'coin', bazaar: 'Bazaar anında alım', ah: 'AH lowest BIN', manual: 'elle', missing: 'fiyat yok' }[i.src]}</span></td>
+      <td><span class="tag">${{ coin: 'coin', bazaar: 'Bazaar anında alım', 'bazaar-order': 'Bazaar buy order', ah: 'AH lowest BIN', manual: 'elle', missing: 'fiyat yok' }[i.src]}</span></td>
       <td>${i.id === COIN ? '' : overrideCell(i.id)}</td></tr>`).join('')}
     <tr><td><b>Çıktı:</b> ${esc(e.name)}</td><td class="num">${r.count}</td><td class="num">${coins(e.sale.unit)}</td><td class="num">${coins(e.sale.net)}</td>
-      <td><span class="tag">${e.sale.src === 'manual' ? 'elle' : e.sale.market === 'ah' ? 'AH lowest BIN' : 'Bazaar sell offer'}</span></td><td>${overrideCell(r.id)}</td></tr>
+      <td><span class="tag">${e.sale.src === 'manual' ? 'elle' : saleLabel(e)}</span></td><td>${overrideCell(r.id)}</td></tr>
   </tbody>`;
 
   const sel = $('#detailSeries');
@@ -300,22 +319,31 @@ async function openDetail(id) {
   await drawDetail();
 }
 
+const saleLabel = (e) => (e.sale.market === 'ah' ? 'AH lowest BIN' : S.sellMode === 'instant' ? 'Bazaar anında satış' : 'Bazaar sell offer');
+
 async function drawDetail() {
   const r = recipes.find((x) => x.id === detailId);
   const which = $('#detailSeries').value;
-  let points, label;
-  if (which === '__profit') { points = await profitSeries(r); label = 'Kâr / item'; }
+  let datasets;
+  if (which === '__profit') datasets = [{ label: 'Kâr / item', points: await profitSeries(r) }];
   else {
     const h = await history(which);
-    points = priceSeries(h); label = `${nameOf(which)} birim fiyat${h?.market === 'ah' ? ' (lowest BIN)' : ' (Bazaar)'}`;
+    datasets = h?.market === 'bazaar'
+      ? [
+        { label: 'Anında alım fiyatı (en düşük satış emri)', points: priceSeries(h, (ask) => ask) },
+        { label: 'Anında satış fiyatı (en yüksek alış emri)', points: priceSeries(h, (ask, bid) => bid) },
+      ]
+      : [{ label: `${nameOf(which)} lowest BIN`, points: priceSeries(h) }];
   }
-  const n = drawChart('detail', $('#detailChart'), [{ label, points }], S.range);
+  const { label, points } = datasets[0];
+  const n = drawChart('detail', $('#detailChart'), datasets, S.range);
   const since = Date.now() / 1000 - S.range * 86400;
-  const st = stability(points.filter((p) => p[0] >= since));
+  const inRange = points.filter((p) => p[0] >= since);
+  const st = stability(inRange);
   $('#detailNote').textContent = n === 0
     ? 'Bu aralıkta henüz kayıtlı fiyat yok. Fiyatlar 15 dakikada bir kaydediliyor, grafik zamanla dolacak.'
-    : st ? `${label}: ortalama ${coins(st.mean)}, en düşük ${coins(st.min)}, en yüksek ${coins(st.max)}, dalgalanma %${st.cv?.toFixed(1)} (${n} kayıt).`
-      : `${n} kayıt var, istatistik için daha fazla veri gerekiyor.`;
+    : st ? `${label}: ortalama ${coins(st.mean)}, en düşük ${coins(st.min)}, en yüksek ${coins(st.max)}, dalgalanma %${st.cv?.toFixed(1)} (${inRange.length} kayıt).`
+      : `${inRange.length} kayıt var, istatistik için daha fazla veri gerekiyor.`;
 }
 
 // ---------- compare ----------
@@ -466,10 +494,10 @@ function wire() {
     document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${t.dataset.tab}`));
     if (t.dataset.tab === 'compare') renderCompare();
   }));
-  for (const [id, key, kind] of [['#market', 'market'], ['#sort', 'sort'], ['#hideMissing', 'hideMissing', 'check'], ['#hideLoss', 'hideLoss', 'check'], ['#showQuick', 'showQuick', 'check']]) {
+  for (const [id, key, kind] of [['#market', 'market'], ['#sort', 'sort'], ['#hideMissing', 'hideMissing', 'check'], ['#hideLoss', 'hideLoss', 'check'], ['#showQuick', 'showQuick', 'check'], ['#buyMode', 'buyMode'], ['#sellMode', 'sellMode']]) {
     const el = $(id);
     if (kind === 'check') el.checked = S[key]; else el.value = S[key];
-    el.addEventListener('change', () => { S[key] = kind === 'check' ? el.checked : el.value; save(); renderBest(); });
+    el.addEventListener('change', () => { S[key] = kind === 'check' ? el.checked : el.value; save(); refreshAll(); });
   }
   $('#search').addEventListener('input', renderBest);
   $('#bestTable tbody').addEventListener('click', (ev) => {

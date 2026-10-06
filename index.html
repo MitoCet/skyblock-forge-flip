@@ -34,6 +34,18 @@
             <option value="ah">Sadece Auction House</option>
           </select>
         </label>
+        <label>Malzeme alışı
+          <select id="buyMode">
+            <option value="instant">Anında alım</option>
+            <option value="order">Buy order</option>
+          </select>
+        </label>
+        <label>Bazaar satışı
+          <select id="sellMode">
+            <option value="offer">Sell offer</option>
+            <option value="instant">Anında satış</option>
+          </select>
+        </label>
         <label>Sırala
           <select id="sort">
             <option value="hour">Saatlik kâr</option>
@@ -59,7 +71,7 @@
               <th class="num">Kâr / item</th>
               <th class="num">Süre</th>
               <th class="num">Kâr / saat</th>
-              <th class="num" title="Bazaar: son 7 günde anında alınan adet. AH: şu anki BIN ilan sayısı.">Talep</th>
+              <th class="num" title="Bazaar: son 7 günde sell offer ile satışta anında alınan, anında satışta anında satılan adet. AH: şu anki BIN ilan sayısı.">Talep</th>
             </tr>
           </thead>
           <tbody></tbody>
