@@ -20,6 +20,8 @@
   <nav class="tabs" role="tablist">
     <button class="tab active" data-tab="best">En kârlı</button>
     <button class="tab" data-tab="compare">Karşılaştır <span id="compareCount" class="badge">0</span></button>
+    <button class="tab" data-tab="npc">NPC vs Bazaar</button>
+    <button class="tab" data-tab="craft">Craft mı al mı</button>
     <button class="tab" data-tab="settings">Profil ve ayarlar</button>
   </nav>
 
@@ -28,26 +30,26 @@
       <div class="controls">
         <input id="search" type="search" placeholder="Item ara…">
         <label>Pazar
-          <select id="market">
+          <select id="market" data-setting="market">
             <option value="all">Hepsi</option>
             <option value="bazaar">Sadece Bazaar</option>
             <option value="ah">Sadece Auction House</option>
           </select>
         </label>
         <label>Malzeme alışı
-          <select id="buyMode">
+          <select id="buyMode" data-setting="buyMode">
             <option value="instant">Anında alım</option>
             <option value="order">Buy order</option>
           </select>
         </label>
         <label>Bazaar satışı
-          <select id="sellMode">
+          <select id="sellMode" data-setting="sellMode">
             <option value="offer">Sell offer</option>
             <option value="instant">Anında satış</option>
           </select>
         </label>
         <label>Sırala
-          <select id="sort">
+          <select id="sort" data-setting="sort">
             <option value="hour">Saatlik kâr</option>
             <option value="item">Item başına kâr</option>
             <option value="margin">Kâr oranı (%)</option>
@@ -55,9 +57,9 @@
             <option value="time">Forge süresi</option>
           </select>
         </label>
-        <label class="check"><input id="hideMissing" type="checkbox" checked> Fiyatı eksik olanları gizle</label>
-        <label class="check"><input id="hideLoss" type="checkbox"> Zarar edenleri gizle</label>
-        <label class="check" title="Forge süresi 10 dakikadan kısa itemler saatlik sıralamada gizlenir, çünkü o hızda satacak kadar alıcı bulunmaz."><input id="showQuick" type="checkbox"> Saatlik sıralamada kısa süreli itemleri göster</label>
+        <label class="check"><input id="hideMissing" data-setting="hideMissing" type="checkbox" checked> Fiyatı eksik olanları gizle</label>
+        <label class="check"><input id="hideLoss" data-setting="hideLoss" type="checkbox"> Zarar edenleri gizle</label>
+        <label class="check" title="Forge süresi 10 dakikadan kısa itemler saatlik sıralamada gizlenir, çünkü o hızda satacak kadar alıcı bulunmaz."><input id="showQuick" data-setting="showQuick" type="checkbox"> Saatlik sıralamada kısa süreli itemleri göster</label>
       </div>
       <div class="table-wrap">
         <table id="bestTable">
@@ -93,6 +95,107 @@
           <p class="muted small" id="compareNote"></p>
         </div>
       </div>
+    </section>
+
+    <section id="tab-npc" class="panel">
+      <div class="controls">
+        <input id="npcSearch" class="search" type="search" placeholder="Item ara…">
+        <label>Bazaar satışı
+          <select data-setting="sellMode">
+            <option value="offer">Sell offer</option>
+            <option value="instant">Anında satış</option>
+          </select>
+        </label>
+        <label>Alış
+          <select data-setting="buyMode">
+            <option value="instant">Anında alım</option>
+            <option value="order">Buy order</option>
+          </select>
+        </label>
+        <label>Sırala
+          <select data-setting="npcSort">
+            <option value="diff">NPC'ye satmanın farkı</option>
+            <option value="flip">NPC flip kârı / adet</option>
+            <option value="flipPct">NPC flip kâr oranı (%)</option>
+            <option value="volume">Haftalık hacim</option>
+            <option value="npc">NPC fiyatı</option>
+          </select>
+        </label>
+        <label class="check"><input data-setting="npcOnlyNpc" type="checkbox"> Sadece NPC'ye satmanın daha iyi olduğu itemler</label>
+        <label class="check"><input data-setting="npcOnlyFlip" type="checkbox"> Sadece NPC flip kârlı olanlar</label>
+      </div>
+      <div class="table-wrap">
+        <table id="npcTable">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th class="num">NPC satış</th>
+              <th class="num" title="Seçili satış yöntemiyle, Bazaar vergisi düşülmüş birim fiyat.">Bazaar satış (net)</th>
+              <th>Nereye sat</th>
+              <th class="num" title="NPC fiyatı − Bazaar net satış. Pozitifse NPC'ye satmak daha iyi.">NPC farkı</th>
+              <th class="num" title="Seçili alış yöntemiyle Bazaar'dan alma fiyatı.">Bazaar alış</th>
+              <th class="num" title="Bazaar'dan alıp NPC'ye satınca adet başına kalan.">NPC flip kârı</th>
+              <th class="num" title="Son 7 günde Bazaar'da anında alınan / anında satılan adet.">Hacim (7g)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="npcNote">NPC'ye satışta vergi yoktur. Bazaar satışından seçili vergi (ayarlardan değişir) düşülür.</p>
+    </section>
+
+    <section id="tab-craft" class="panel">
+      <div class="controls">
+        <input id="craftSearch" class="search" type="search" placeholder="Item ara…">
+        <label>Pazar
+          <select data-setting="craftMarket">
+            <option value="all">Hepsi</option>
+            <option value="bazaar">Sadece Bazaar</option>
+            <option value="ah">Sadece Auction House</option>
+          </select>
+        </label>
+        <label>Alış
+          <select data-setting="buyMode">
+            <option value="instant">Anında alım</option>
+            <option value="order">Buy order</option>
+          </select>
+        </label>
+        <label>Bazaar satışı
+          <select data-setting="sellMode">
+            <option value="offer">Sell offer</option>
+            <option value="instant">Anında satış</option>
+          </select>
+        </label>
+        <label>Sırala
+          <select data-setting="craftSort">
+            <option value="save">Craftlamanın tasarrufu</option>
+            <option value="savePct">Tasarruf oranı (%)</option>
+            <option value="profit">Craftlayıp satma kârı</option>
+            <option value="buy">Satın alma fiyatı</option>
+          </select>
+        </label>
+        <label class="check" title="Bir malzeme de craftlanabiliyorsa ve craftlamak daha ucuzsa, o malzeme de craftlanmış sayılır."><input data-setting="craftDeep" type="checkbox"> Alt tarifleri de hesaba kat</label>
+        <label class="check"><input data-setting="craftOnlyCheaper" type="checkbox"> Sadece craftlamanın daha ucuz olduğu itemler</label>
+        <label class="check"><input data-setting="craftHideMissing" type="checkbox"> Fiyatı eksik olanları gizle</label>
+      </div>
+      <div class="table-wrap">
+        <table id="craftTable">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Pazar</th>
+              <th class="num" title="Seçili alış yöntemiyle hazır itemi almanın fiyatı (AH için lowest BIN).">Satın alma</th>
+              <th class="num" title="Malzemeleri alıp craftlamanın 1 adet için maliyeti.">Craft maliyeti</th>
+              <th>Daha iyi</th>
+              <th class="num" title="Satın alma − craft maliyeti. Pozitifse craftlamak daha ucuz.">Tasarruf</th>
+              <th class="num" title="Craftlayıp seçili yöntemle satınca 1 adet başına net kâr (vergi ve AH ücretleri düşülmüş).">Craftla + sat kârı</th>
+              <th class="num" title="Bazaar: son 7 günde satış yönteminin hacmi. AH: şu anki BIN ilan sayısı.">Talep</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="craftNote">Malzemeleri görmek için satıra tıkla. Tarifler NotEnoughUpdates verisinden, fiyatı olmayan malzemeler (NPC'den alınan vanilla itemler gibi) eksik sayılır.</p>
     </section>
 
     <section id="tab-settings" class="panel">

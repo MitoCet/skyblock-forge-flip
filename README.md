@@ -4,6 +4,8 @@ Hypixel Skyblock'taki forge tariflerinin hangisinin en çok kâr getirdiğini g�
 
 - **En kârlı:** Tüm forge tarifleri; item başına kâr, saatlik kâr, kâr oranı, maliyet veya süreye göre sıralanır. Bazaar / Auction House filtresi vardır.
 - **Karşılaştır:** Seçtiğin itemler yan yana, kâr geçmişi grafiğiyle birlikte.
+- **NPC vs Bazaar:** NPC satış fiyatı olan her Bazaar iteminde NPC'ye mi Bazaar'a mı satmanın daha iyi olduğu, ve Bazaar'dan alıp NPC'ye satmanın (NPC flip) adet başına kârı.
+- **Craft mı al mı:** Crafting table tarifi olan her itemde hazır almak mı (Bazaar ya da AH lowest BIN) malzemeleri alıp craftlamak mı daha ucuz, ve craftlayıp satmanın kârı. İstersen malzemelerin alt tarifleri de hesaba katılır.
 - **Detay:** Bir satıra tıklayınca malzeme dökümü, her malzemenin ve çıktının fiyat geçmişi grafiği, elle fiyat girme.
 - **Profil ve ayarlar:** Kullanıcı adınla forge slot sayını ve Quick Forge seviyeni çeker; istersen bunları elle girersin.
 
@@ -21,9 +23,9 @@ Forge slot sayısı HotM seviyesinden tahmin edilir (HotM 1–2: 2, HotM 3: 3, H
 
 ## Nasıl çalışıyor
 
-- `scripts/build-recipes.mjs` forge tariflerini [NotEnoughUpdates-REPO](https://github.com/NotEnoughUpdates/NotEnoughUpdates-REPO)'dan günde bir kez okur.
+- `scripts/build-recipes.mjs` forge ve crafting table tariflerini [NotEnoughUpdates-REPO](https://github.com/NotEnoughUpdates/NotEnoughUpdates-REPO)'dan günde bir kez okur.
 - `scripts/collect.mjs` Hypixel'in herkese açık Bazaar ve Auction House API'lerinden fiyatları alır.
-- `.github/workflows/collect.yml` bunları **15 dakikada bir** çalıştırır ve sonuçları `data` dalına yazar (`recipes.json`, `latest.json`, `history/<ITEM>.json`, son 30 gün). `data` dalı her seferinde tek bir commit olarak yeniden yazılır, böylece repo büyümez.
+- `.github/workflows/collect.yml` bunları **15 dakikada bir** çalıştırır ve sonuçları `data` dalına yazar (`recipes.json`, `crafts.json`, `latest.json`, `market.json`, `npc.json`, `history/<ITEM>.json`, son 30 gün). `market.json` tüm Bazaar ve AH itemlerinin anlık fiyatını tutar (geçmişi yok); `npc.json` NPC satış fiyatlarını Hypixel'in item listesinden günde bir kez alır. `data` dalı her seferinde tek bir commit olarak yeniden yazılır, böylece repo büyümez.
 - Site (`index.html`, `js/app.js`, `css/style.css`) bu dosyaları okur. Sunucu gerekmez.
 
 ## Kurulum (bir kez)

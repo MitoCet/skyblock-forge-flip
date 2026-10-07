@@ -18,6 +18,8 @@ const DEFAULTS = {
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
+  npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false,
+  craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
 };
 let S = load();
 function load() {
@@ -396,6 +398,227 @@ async function drawCompare() {
     + 'Kâr, her kayıt anındaki Bazaar/AH fiyatlarıyla yeniden hesaplanır.';
 }
 
+// ---------- market-wide data (NPC and craft tabs) ----------
+// market.json: every Bazaar product [ask, bid, buyWeek, sellWeek] and every AH item [lowestBin, listings].
+let market = null, npcData = null, craftData = null;
+const craftsBy = new Map();
+let extraPromise = null;
+function loadExtra() {
+  extraPromise ??= Promise.all([
+    getJson(DATA_URL + 'market.json'),
+    getJson(DATA_URL + 'npc.json').catch(() => null),
+    getJson(DATA_URL + 'crafts.json').catch(() => null),
+  ]).then(([m, n, c]) => {
+    market = m; npcData = n; craftData = c;
+    for (const cr of c?.crafts || []) {
+      if (!craftsBy.has(cr.id)) craftsBy.set(cr.id, []);
+      craftsBy.get(cr.id).push(cr);
+    }
+  });
+  extraPromise.catch(() => { extraPromise = null; });
+  return extraPromise;
+}
+const anyName = (id) => craftData?.names[id] || npcData?.names[id] || names[id] || id;
+
+// Ensures market data is loaded; shows a message in the table while it is not.
+async function needMarket(tbody, cols) {
+  if (market) return true;
+  tbody.innerHTML = `<tr><td colspan="${cols}" class="muted">Fiyatlar yükleniyor…</td></tr>`;
+  try { await loadExtra(); return true; } catch (err) {
+    console.error(err);
+    tbody.innerHTML = `<tr><td colspan="${cols}" class="muted">Bu bölümün verisi henüz yok. Fiyat toplayıcı bir sonraki çalışmasında (15 dakikada bir) oluşturacak.</td></tr>`;
+    return false;
+  }
+}
+
+// ---------- NPC vs Bazaar ----------
+async function renderNpc() {
+  const tbody = $('#npcTable tbody');
+  if (!await needMarket(tbody, 8)) return;
+  if (!npcData) {
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">NPC fiyatları henüz toplanmadı. Fiyat toplayıcı bir sonraki çalışmasında ekleyecek.</td></tr>';
+    return;
+  }
+  const q = $('#npcSearch').value.trim().toLowerCase();
+  let list = [];
+  for (const [id, [ask, bid, buyWeek, sellWeek]] of Object.entries(market.bz)) {
+    const npc = npcData.npc[id];
+    if (!npc) continue;
+    const sellUnit = bzSellUnit(ask, bid);
+    const sell = sellUnit == null ? null : sellUnit * (1 - S.bzTax / 100);
+    const buy = bzBuyUnit(ask, bid);
+    const flip = buy == null ? null : npc - buy;
+    list.push({
+      id, name: anyName(id), npc, sell, buy, flip,
+      diff: sell == null ? npc : npc - sell,
+      flipPct: flip == null || !buy ? null : (flip / buy) * 100,
+      volume: S.sellMode === 'instant' ? sellWeek : buyWeek,
+    });
+  }
+  if (q) list = list.filter((e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
+  if (S.npcOnlyNpc) list = list.filter((e) => e.diff > 0);
+  if (S.npcOnlyFlip) list = list.filter((e) => e.flip > 0);
+  const key = S.npcSort;
+  list.sort((a, b) => (a[key] == null ? 1 : b[key] == null ? -1 : b[key] - a[key]));
+  tbody.innerHTML = list.map((e) => {
+    const toNpc = e.diff > 0;
+    const fcls = e.flip == null ? '' : e.flip > 0 ? 'pos' : 'neg';
+    return `<tr>
+      <td>${esc(e.name)}</td>
+      <td class="num">${coins(e.npc)}</td>
+      <td class="num">${coins(e.sell)}</td>
+      <td><span class="tag">${toNpc ? 'NPC' : 'Bazaar'}</span></td>
+      <td class="num ${toNpc ? 'pos' : 'neg'}">${coins(e.diff)}</td>
+      <td class="num">${coins(e.buy)}</td>
+      <td class="num ${fcls}">${coins(e.flip)}${e.flipPct != null && e.flip > 0 ? ` <span class="muted small">%${e.flipPct.toFixed(1)}</span>` : ''}</td>
+      <td class="num">${coins(e.volume)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" class="muted">Filtrelere uyan item yok.</td></tr>';
+  $('#npcNote').textContent = `${list.length} item. NPC'ye satışta vergi yoktur; Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). NPC fiyatları Hypixel'in item listesinden günde bir kez alınır.`;
+}
+
+// ---------- craft vs buy ----------
+// Unit price of buying a ready item: Bazaar (by buy mode), else AH lowest BIN.
+function marketBuy(id) {
+  if (S.overrides[id] != null) return { unit: S.overrides[id], src: 'manual' };
+  const b = market.bz[id];
+  if (b) {
+    const unit = bzBuyUnit(b[0], b[1]);
+    if (unit != null) return { unit, src: S.buyMode === 'order' && b[1] != null ? 'bazaar-order' : 'bazaar' };
+  }
+  const a = market.ah[id];
+  if (a) return { unit: a[0], src: 'ah' };
+  return { unit: null, src: 'missing' };
+}
+
+// Net coins from selling one unit (Bazaar after tax, AH after fees).
+function marketSell(id) {
+  const manual = S.overrides[id];
+  const b = market.bz[id];
+  if (b) {
+    const unit = manual ?? bzSellUnit(b[0], b[1]);
+    return { market: 'bazaar', net: unit == null ? null : unit * (1 - S.bzTax / 100), demand: S.sellMode === 'instant' ? b[3] : b[2] };
+  }
+  const a = market.ah[id];
+  if (a || manual != null) {
+    const unit = manual ?? a[0];
+    return { market: 'ah', net: unit - ahFee(unit), demand: a ? a[1] : null };
+  }
+  return { market: 'unknown', net: null, demand: null };
+}
+
+// Cheapest way to get one unit of `id`: buy it, or (with sub-recipes on) craft it.
+// `stack` holds the items being crafted above this one, to stop recipe loops.
+function acquire(id, ctx) {
+  const buy = marketBuy(id);
+  if (!S.craftDeep || ctx.stack.has(id) || !craftsBy.has(id)) return { unit: buy.unit, src: buy.src };
+  if (ctx.memo.has(id)) return ctx.memo.get(id);
+  const best = bestCraft(id, ctx);
+  const res = best.unit != null && (buy.unit == null || best.unit < buy.unit)
+    ? { unit: best.unit, src: 'craft', craft: best } : { unit: buy.unit, src: buy.src };
+  ctx.memo.set(id, res);
+  return res;
+}
+function craftCost(c, ctx) {
+  const inputs = c.inputs.map((i) => {
+    const a = acquire(i.id, ctx);
+    return { ...i, ...a, total: a.unit == null ? null : a.unit * i.count };
+  });
+  const missing = inputs.some((i) => i.total == null);
+  return { recipe: c, inputs, unit: missing ? null : inputs.reduce((s, i) => s + i.total, 0) / c.count };
+}
+function bestCraft(id, ctx) {
+  ctx.stack.add(id);
+  let best = null;
+  for (const c of craftsBy.get(id)) {
+    const cc = craftCost(c, ctx);
+    if (!best || (cc.unit != null && (best.unit == null || cc.unit < best.unit))) best = cc;
+  }
+  ctx.stack.delete(id);
+  return best;
+}
+
+function craftRows() {
+  const ctx = { memo: new Map(), stack: new Set() };
+  const out = [];
+  for (const id of craftsBy.keys()) {
+    const mk = market.bz[id] ? 'bazaar' : market.ah[id] ? 'ah' : 'unknown';
+    if (mk === 'unknown' && S.overrides[id] == null) continue; // nothing to compare against
+    const craft = bestCraft(id, ctx);
+    const buy = marketBuy(id);
+    const sale = marketSell(id);
+    const save = buy.unit != null && craft.unit != null ? buy.unit - craft.unit : null;
+    out.push({
+      id, name: anyName(id), market: mk, craft, buy: buy.unit, sale, save,
+      savePct: save != null && buy.unit > 0 ? (save / buy.unit) * 100 : null,
+      profit: sale.net != null && craft.unit != null ? sale.net - craft.unit : null,
+      missing: save == null,
+    });
+  }
+  return out;
+}
+
+let craftOpen = null;
+const SRC_LABEL = { bazaar: 'Bazaar anında alım', 'bazaar-order': 'Bazaar buy order', ah: 'AH lowest BIN', manual: 'elle', craft: 'craftlanır', missing: 'fiyat yok', coin: 'coin' };
+
+function craftDetail(e) {
+  const c = e.craft;
+  const line = (i, depth) => {
+    const pad = depth ? `<span class="muted">${'— '.repeat(depth)}</span>` : '';
+    let html = `<tr><td>${pad}${esc(anyName(i.id))}</td><td class="num">${i.count.toLocaleString('tr-TR')}</td>
+      <td class="num">${coins(i.unit)}</td><td class="num">${coins(i.total)}</td><td><span class="tag">${SRC_LABEL[i.src]}</span></td></tr>`;
+    if (i.src === 'craft' && depth < 4) {
+      // Sub-recipe amounts scaled to how many units this ingredient needs.
+      const k = i.count / i.craft.recipe.count;
+      html += i.craft.inputs.map((s) => line({ ...s, count: s.count * k, total: s.total == null ? null : s.total * k }, depth + 1)).join('');
+    }
+    return html;
+  };
+  return `<tr class="sub"><td colspan="8">
+    ${c.recipe.count > 1 ? `<p class="small muted">Bir craft ${c.recipe.count} adet verir; maliyet adet başına bölündü.</p>` : ''}
+    ${craftsBy.get(e.id).length > 1 ? `<p class="small muted">Bu itemin ${craftsBy.get(e.id).length} tarifi var; en ucuzu gösteriliyor.</p>` : ''}
+    <table><thead><tr><th>Malzeme (1 craft)</th><th class="num">Adet</th><th class="num">Birim</th><th class="num">Toplam</th><th>Nasıl</th></tr></thead>
+    <tbody>${c.inputs.map((i) => line(i, 0)).join('')}</tbody></table>
+  </td></tr>`;
+}
+
+async function renderCraft() {
+  const tbody = $('#craftTable tbody');
+  if (!await needMarket(tbody, 8)) return;
+  if (!craftData) {
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">Craft tarifleri henüz oluşturulmadı. Fiyat toplayıcı bir sonraki çalışmasında ekleyecek.</td></tr>';
+    return;
+  }
+  const q = $('#craftSearch').value.trim().toLowerCase();
+  let list = craftRows();
+  if (S.craftMarket !== 'all') list = list.filter((e) => e.market === S.craftMarket);
+  if (S.craftHideMissing) list = list.filter((e) => !e.missing);
+  if (S.craftOnlyCheaper) list = list.filter((e) => e.save > 0);
+  if (q) list = list.filter((e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
+  const key = S.craftSort;
+  list.sort((a, b) => (a[key] == null ? 1 : b[key] == null ? -1 : b[key] - a[key]));
+  const shown = list.slice(0, 500);
+  tbody.innerHTML = shown.map((e) => {
+    const better = e.save == null ? '—' : e.save > 0 ? '<span class="tag pos">Craftla</span>' : '<span class="tag">Satın al</span>';
+    const scls = e.save == null ? '' : e.save > 0 ? 'pos' : 'neg';
+    const pcls = e.profit == null ? '' : e.profit > 0 ? 'pos' : 'neg';
+    const demand = e.sale.demand == null ? '—' : e.market === 'ah' ? `${e.sale.demand} ilan` : `${coins(e.sale.demand)}/hf`;
+    return `<tr data-id="${esc(e.id)}">
+      <td>${esc(e.name)}</td>
+      <td><span class="tag">${e.market === 'ah' ? 'AH' : 'Bazaar'}</span></td>
+      <td class="num">${coins(e.buy)}</td>
+      <td class="num">${coins(e.craft.unit)}</td>
+      <td>${better}</td>
+      <td class="num ${scls}">${coins(e.save)}${e.savePct != null && e.save > 0 ? ` <span class="muted small">%${e.savePct.toFixed(1)}</span>` : ''}</td>
+      <td class="num ${pcls}">${coins(e.profit)}</td>
+      <td class="num">${demand}</td>
+    </tr>${craftOpen === e.id ? craftDetail(e) : ''}`;
+  }).join('') || '<tr><td colspan="8" class="muted">Filtrelere uyan item yok.</td></tr>';
+  $('#craftNote').textContent = `${list.length} item${list.length > shown.length ? `, ilk ${shown.length} tanesi gösteriliyor (aramayla daralt)` : ''}. Malzemeleri görmek için satıra tıkla. `
+    + (S.craftDeep ? 'Bir malzemeyi craftlamak daha ucuzsa o da craftlanmış sayılıyor. ' : 'Malzemeler hazır satın alınmış sayılıyor. ')
+    + 'Fiyatı olmayan malzemeler (NPC\'den alınan vanilla itemler gibi) eksik sayılır.';
+}
+
 // ---------- profile ----------
 async function uuidFor(name) {
   try {
@@ -486,6 +709,8 @@ function refreshAll() {
   renderBest();
   $('#compareCount').textContent = S.compare.length;
   if ($('#tab-compare').classList.contains('active')) renderCompare();
+  if ($('#tab-npc').classList.contains('active')) renderNpc();
+  if ($('#tab-craft').classList.contains('active')) renderCraft();
 }
 
 function wire() {
@@ -493,13 +718,28 @@ function wire() {
     document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
     document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${t.dataset.tab}`));
     if (t.dataset.tab === 'compare') renderCompare();
+    if (t.dataset.tab === 'npc') renderNpc();
+    if (t.dataset.tab === 'craft') renderCraft();
   }));
-  for (const [id, key, kind] of [['#market', 'market'], ['#sort', 'sort'], ['#hideMissing', 'hideMissing', 'check'], ['#hideLoss', 'hideLoss', 'check'], ['#showQuick', 'showQuick', 'check'], ['#buyMode', 'buyMode'], ['#sellMode', 'sellMode']]) {
-    const el = $(id);
-    if (kind === 'check') el.checked = S[key]; else el.value = S[key];
-    el.addEventListener('change', () => { S[key] = kind === 'check' ? el.checked : el.value; save(); refreshAll(); });
-  }
+  // Controls bound to a setting; the same setting (e.g. buy mode) can appear on several tabs.
+  const bound = document.querySelectorAll('[data-setting]');
+  const syncBound = () => bound.forEach((el) => {
+    if (el.type === 'checkbox') el.checked = S[el.dataset.setting]; else el.value = S[el.dataset.setting];
+  });
+  syncBound();
+  bound.forEach((el) => el.addEventListener('change', () => {
+    S[el.dataset.setting] = el.type === 'checkbox' ? el.checked : el.value;
+    save(); syncBound(); refreshAll();
+  }));
   $('#search').addEventListener('input', renderBest);
+  $('#npcSearch').addEventListener('input', renderNpc);
+  $('#craftSearch').addEventListener('input', renderCraft);
+  $('#craftTable tbody').addEventListener('click', (ev) => {
+    const tr = ev.target.closest('tr[data-id]');
+    if (!tr) return;
+    craftOpen = craftOpen === tr.dataset.id ? null : tr.dataset.id;
+    renderCraft();
+  });
   $('#bestTable tbody').addEventListener('click', (ev) => {
     const tr = ev.target.closest('tr[data-id]');
     if (!tr) return;

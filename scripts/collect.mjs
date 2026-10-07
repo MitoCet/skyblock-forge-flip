@@ -1,5 +1,7 @@
 // Takes one price snapshot of every forge-related item from Hypixel's public
 // Bazaar and Auction House APIs. Writes latest.json and appends to history/.
+// Also writes market.json (current price of every Bazaar product and every
+// AH item, no history) and npc.json (NPC sell prices, refreshed daily).
 // Usage: node scripts/collect.mjs <dataDir>
 // Set FIXTURE_DIR to read bazaar.json / auctions_<page>.json from disk instead (tests).
 import fs from 'node:fs';
@@ -54,8 +56,20 @@ for (const id of tracked) {
   };
 }
 
-// Auction House: lowest BIN per unit for tracked items that are not on the Bazaar.
+// Every Bazaar product: [instant buy, instant sell, buyWeek, sellWeek].
+const bzAll = {};
+for (const [id, p] of Object.entries(bz.products || {})) {
+  const q = p.quick_status || {};
+  const ask = round(p.buy_summary?.[0]?.pricePerUnit ?? null);
+  const bid = round(p.sell_summary?.[0]?.pricePerUnit ?? null);
+  if (ask == null && bid == null) continue;
+  bzAll[id] = [ask, bid, q.buyMovingWeek ?? 0, q.sellMovingWeek ?? 0];
+}
+
+// Auction House: lowest BIN per unit for items that are not on the Bazaar.
+// `ah` covers tracked forge items (with history); `ahAll` covers everything.
 const ah = {};
+const ahAll = {};
 const first = await getJson('auctions_0', `${API}/auctions?page=0`);
 const pages = [first];
 const pageNums = [...Array(first.totalPages || 1).keys()].slice(1);
@@ -68,16 +82,41 @@ for (const page of pages) {
     if (!a.bin || a.claimed) continue;
     let info;
     try { info = itemIdFromBytes(a.item_bytes); } catch { continue; }
-    if (!info || !tracked.has(info.id) || bazaar[info.id]) continue;
+    if (!info || bz.products?.[info.id]) continue;
     const unit = a.starting_bid / info.count;
+    const all = ahAll[info.id] || (ahAll[info.id] = [unit, 0]);
+    all[0] = Math.min(all[0], unit);
+    all[1]++;
+    if (!tracked.has(info.id) || bazaar[info.id]) continue;
     const cur = ah[info.id] || (ah[info.id] = { lbin: unit, n: 0 });
     cur.lbin = Math.min(cur.lbin, unit);
     cur.n++;
   }
 }
 for (const v of Object.values(ah)) v.lbin = round(v.lbin);
+for (const v of Object.values(ahAll)) v[0] = round(v[0]);
 
 fs.writeFileSync(path.join(dataDir, 'latest.json'), JSON.stringify({ ts, bazaar, ah }));
+fs.writeFileSync(path.join(dataDir, 'market.json'), JSON.stringify({ ts, bz: bzAll, ah: ahAll }));
+
+// NPC sell prices change rarely; refresh them once a day. A failed refresh keeps the old file.
+const npcFile = path.join(dataDir, 'npc.json');
+const npcOld = fs.existsSync(npcFile) ? JSON.parse(fs.readFileSync(npcFile, 'utf8')) : null;
+if (!npcOld || Date.now() - npcOld.fetchedAt > 24 * 3600 * 1000) {
+  try {
+    const res = await getJson('items', 'https://api.hypixel.net/v2/resources/skyblock/items');
+    const npc = {}, names = {};
+    for (const it of res.items || []) {
+      if (!it.id) continue;
+      if (it.name) names[it.id] = it.name.replace(/§./g, '').trim();
+      if (it.npc_sell_price > 0) npc[it.id] = it.npc_sell_price;
+    }
+    fs.writeFileSync(npcFile, JSON.stringify({ fetchedAt: Date.now(), npc, names }));
+    console.log(`npc.json: ${Object.keys(npc).length} NPC prices`);
+  } catch (e) {
+    console.error(`NPC prices not refreshed: ${e.message}`);
+  }
+}
 
 // History: one small file per item, points are [unixSeconds, price...].
 const histDir = path.join(dataDir, 'history');
