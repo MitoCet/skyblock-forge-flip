@@ -18,6 +18,7 @@ const DEFAULTS = {
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
+  liveAh: false,
   npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
 };
@@ -431,6 +432,137 @@ async function needMarket(tbody, cols) {
   }
 }
 
+// ---------- live prices (NPC and craft tabs) ----------
+// "Güncel fiyatları çek" reads Hypixel directly and only replaces `market` in memory:
+// nothing is written to the data branch, history or charts.
+const roundP = (v) => (v == null ? null : Math.round(v * 10) / 10);
+let liveAt = null, liveBusy = false;
+
+function loadScript(src) {
+  return new Promise((ok, fail) => {
+    const el = document.createElement('script');
+    el.src = src; el.onload = ok; el.onerror = () => fail(new Error(`${src} yüklenemedi`));
+    document.head.appendChild(el);
+  });
+}
+
+// Minimal NBT reader for AH item_bytes (same logic as scripts/nbt.mjs).
+function readNbt(bytes) {
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dec = new TextDecoder();
+  let pos = 0;
+  const str = () => { const n = v.getUint16(pos); pos += 2; const t = dec.decode(bytes.subarray(pos, pos + n)); pos += n; return t; };
+  const payload = (type) => {
+    switch (type) {
+      case 1: return v.getInt8(pos++);
+      case 2: { const x = v.getInt16(pos); pos += 2; return x; }
+      case 3: { const x = v.getInt32(pos); pos += 4; return x; }
+      case 4: pos += 8; return null;
+      case 5: pos += 4; return null;
+      case 6: pos += 8; return null;
+      case 7: { const n = v.getInt32(pos); pos += 4 + n; return null; }
+      case 8: return str();
+      case 9: { const t = v.getInt8(pos++); const n = v.getInt32(pos); pos += 4; const out = []; for (let i = 0; i < n; i++) out.push(payload(t)); return out; }
+      case 10: { const o = {}; for (;;) { const t = v.getInt8(pos++); if (t === 0) return o; const k = str(); o[k] = payload(t); } }
+      case 11: { const n = v.getInt32(pos); pos += 4 + 4 * n; return null; }
+      case 12: { const n = v.getInt32(pos); pos += 4 + 8 * n; return null; }
+      default: throw new Error(`NBT ${type}`);
+    }
+  };
+  const type = v.getInt8(pos++);
+  str();
+  return payload(type);
+}
+const PET_TIERS = ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY', 'MYTHIC'];
+function auctionItem(b64) {
+  const bin = atob(b64);
+  const raw = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) raw[i] = bin.charCodeAt(i);
+  const item = readNbt(window.pako.ungzip(raw))?.i?.[0];
+  const ea = item?.tag?.ExtraAttributes;
+  if (!ea?.id) return null;
+  let id = ea.id;
+  if (id === 'PET' && ea.petInfo) {
+    try { const p = JSON.parse(ea.petInfo); id = `${p.type};${PET_TIERS.indexOf(p.tier)}`; } catch { return null; }
+  }
+  return { id, count: item.Count || 1 };
+}
+
+async function fetchLive(withAh, status) {
+  await loadExtra();
+  status('Bazaar fiyatları alınıyor…');
+  const res = await getJson(`${HYPIXEL}/bazaar`);
+  const bz = {};
+  for (const [id, p] of Object.entries(res.products || {})) {
+    const q = p.quick_status || {};
+    const ask = roundP(p.buy_summary?.[0]?.pricePerUnit ?? null);
+    const bid = roundP(p.sell_summary?.[0]?.pricePerUnit ?? null);
+    if (ask == null && bid == null) continue;
+    bz[id] = [ask, bid, q.buyMovingWeek ?? 0, q.sellMovingWeek ?? 0];
+  }
+  let ah = market.ah;
+  if (withAh) {
+    if (!window.pako) await loadScript('https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js');
+    ah = {};
+    const first = await getJson(`${HYPIXEL}/auctions?page=0`);
+    const total = first.totalPages || 1;
+    const pages = [first];
+    let done = 1;
+    status(`AH ilanları alınıyor… 1/${total}`);
+    const rest = [...Array(total).keys()].slice(1);
+    for (let i = 0; i < rest.length; i += 8) {
+      pages.push(...await Promise.all(rest.slice(i, i + 8).map((n) => getJson(`${HYPIXEL}/auctions?page=${n}`)
+        .catch(() => null).finally(() => status(`AH ilanları alınıyor… ${++done}/${total}`)))));
+    }
+    status('AH ilanları işleniyor…');
+    await new Promise((r) => setTimeout(r)); // let the status paint
+    for (const page of pages) {
+      for (const a of page?.auctions || []) {
+        if (!a.bin || a.claimed) continue;
+        let info;
+        try { info = auctionItem(a.item_bytes); } catch { continue; }
+        if (!info || bz[info.id]) continue;
+        const unit = a.starting_bid / info.count;
+        const cur = ah[info.id] || (ah[info.id] = [unit, 0]);
+        cur[0] = Math.min(cur[0], unit);
+        cur[1]++;
+      }
+    }
+    for (const v of Object.values(ah)) v[0] = roundP(v[0]);
+  }
+  market = { ...market, ts: Math.floor((res.lastUpdated || Date.now()) / 1000), bz, ah, live: true, liveAh: withAh || market.liveAh };
+  liveAt = new Date();
+}
+
+function renderLiveStatus(text) {
+  const time = liveAt?.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  document.querySelectorAll('.live-status').forEach((el) => {
+    el.classList.toggle('on', !text && !!liveAt);
+    el.textContent = text || (liveAt
+      ? `Anlık fiyatlar (${time}, Bazaar${market.liveAh ? ' + AH' : ''}). Kaydedilmez; sayfayı yenileyince 15 dakikalık kayda döner.`
+      : '');
+  });
+}
+
+async function liveClick() {
+  if (liveBusy) return;
+  liveBusy = true;
+  document.querySelectorAll('.live-btn').forEach((b) => { b.disabled = true; });
+  try {
+    await fetchLive(S.liveAh, renderLiveStatus);
+    renderLiveStatus();
+    refreshAll();
+  } catch (err) {
+    console.error(err);
+    renderLiveStatus(err instanceof TypeError
+      ? 'Hypixel\'e bağlanılamadı. İnternet bağlantını kontrol edip tekrar dene.'
+      : `Fiyatlar alınamadı: ${err.message}`);
+  } finally {
+    liveBusy = false;
+    document.querySelectorAll('.live-btn').forEach((b) => { b.disabled = false; });
+  }
+}
+
 // ---------- NPC vs Bazaar ----------
 async function renderNpc() {
   const farm = S.npcView === 'farm';
@@ -784,6 +916,7 @@ function wire() {
   }));
   $('#search').addEventListener('input', renderBest);
   $('#npcSearch').addEventListener('input', renderNpc);
+  document.querySelectorAll('.live-btn').forEach((b) => b.addEventListener('click', liveClick));
   $('#craftSearch').addEventListener('input', renderCraft);
   $('#craftTable tbody').addEventListener('click', (ev) => {
     const tr = ev.target.closest('tr[data-id]');

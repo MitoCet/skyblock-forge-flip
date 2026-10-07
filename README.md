@@ -6,6 +6,7 @@ Hypixel Skyblock'taki forge tariflerinin hangisinin en çok kâr getirdiğini g�
 - **Karşılaştır:** Seçtiğin itemler yan yana, kâr geçmişi grafiğiyle birlikte.
 - **NPC vs Bazaar:** NPC satış fiyatı olan her Bazaar iteminde NPC'ye mi Bazaar'a mı satmanın daha iyi olduğu, ve Bazaar'dan alıp NPC'ye satmanın (NPC flip) adet başına kârı. "Farming" görünümü seçili farming itemlerinde (Enchanted Hay Bale, Mutant Nether Wart, Polished Pumpkin, Fermento, Helianthus vb.) NPC ve Bazaar fiyatını yan yana gösterir.
 - **Craft mı al mı:** Crafting table tarifi olan her itemde hazır almak mı (Bazaar ya da AH lowest BIN) malzemeleri alıp craftlamak mı daha ucuz, ve craftlayıp satmanın kârı. İstersen malzemelerin alt tarifleri de hesaba katılır.
+- **Güncel fiyatları çek:** NPC vs Bazaar ve Craft mı al mı sekmelerindeki buton, fiyatları o an doğrudan Hypixel'den alır (istersen AH'ı da). Bu fiyatlar hiçbir yere kaydedilmez ve grafiklere işlenmez; sayfayı yenileyince 15 dakikalık kayda dönülür.
 - **Detay:** Bir satıra tıklayınca malzeme dökümü, her malzemenin ve çıktının fiyat geçmişi grafiği, elle fiyat girme.
 - **Profil ve ayarlar:** Kullanıcı adınla forge slot sayını ve Quick Forge seviyeni çeker; istersen bunları elle girersin.
 
