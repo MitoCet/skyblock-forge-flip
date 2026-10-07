@@ -98,6 +98,11 @@
     </section>
 
     <section id="tab-npc" class="panel">
+      <div class="seg" role="radiogroup" aria-label="Görünüm">
+        <label><input type="radio" name="npcView" value="all" data-setting="npcView"> Tüm itemler</label>
+        <label><input type="radio" name="npcView" value="farm" data-setting="npcView"> Farming</label>
+      </div>
+      <div id="npcAll">
       <div class="controls">
         <input id="npcSearch" class="search" type="search" placeholder="Item ara…">
         <label>Bazaar satışı
@@ -142,6 +147,43 @@
         </table>
       </div>
       <p class="muted small" id="npcNote">NPC'ye satışta vergi yoktur. Bazaar satışından seçili vergi (ayarlardan değişir) düşülür.</p>
+      </div>
+      <div id="npcFarm" hidden>
+        <div class="controls">
+          <label>Farmladığın ham item adedi
+            <input id="farmAmount" data-setting="farmAmount" type="number" min="0" step="1000">
+          </label>
+          <label>Bazaar satışı
+            <select data-setting="sellMode">
+              <option value="offer">Sell offer</option>
+              <option value="instant">Anında satış</option>
+            </select>
+          </label>
+          <label>Sırala
+            <select data-setting="farmSort">
+              <option value="best">Ham item başına en iyi fiyat</option>
+              <option value="name">Ürün adı</option>
+            </select>
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table id="farmTable">
+            <thead>
+              <tr>
+                <th>Form</th>
+                <th class="num" title="Bu formun 1 adedi kaç ham itemden yapılıyor.">Ham karşılığı</th>
+                <th class="num">NPC (adet)</th>
+                <th class="num" title="Seçili satış yöntemiyle, vergi düşülmüş.">Bazaar net (adet)</th>
+                <th class="num">NPC / ham</th>
+                <th class="num">Bazaar / ham</th>
+                <th class="num" title="Son 7 günde seçili satış yönteminin Bazaar hacmi.">Hacim (7g)</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="muted small" id="farmNote"></p>
+      </div>
     </section>
 
     <section id="tab-craft" class="panel">

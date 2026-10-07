@@ -18,7 +18,7 @@ const DEFAULTS = {
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
-  npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false,
+  npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmAmount: 100000, farmSort: 'best',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
 };
 let S = load();
@@ -433,6 +433,10 @@ async function needMarket(tbody, cols) {
 
 // ---------- NPC vs Bazaar ----------
 async function renderNpc() {
+  const farm = S.npcView === 'farm';
+  $('#npcAll').hidden = farm;
+  $('#npcFarm').hidden = !farm;
+  if (farm) return renderFarm();
   const tbody = $('#npcTable tbody');
   if (!await needMarket(tbody, 8)) return;
   if (!npcData) {
@@ -475,6 +479,105 @@ async function renderNpc() {
     </tr>`;
   }).join('') || '<tr><td colspan="8" class="muted">Filtrelere uyan item yok.</td></tr>';
   $('#npcNote').textContent = `${list.length} item. NPC'ye satışta vergi yoktur; Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). NPC fiyatları Hypixel'in item listesinden günde bir kez alınır.`;
+}
+
+// ---------- farming view (inside NPC vs Bazaar) ----------
+// Each group starts with the raw drop; the other forms are its compressed versions.
+// How many raw items one form holds is worked out from the crafting recipes.
+const FARM_GROUPS = [
+  ['WHEAT', 'ENCHANTED_WHEAT', 'ENCHANTED_HAY_BALE'],
+  ['SEEDS', 'ENCHANTED_SEEDS', 'BOX_OF_SEEDS'],
+  ['CARROT_ITEM', 'ENCHANTED_CARROT', 'ENCHANTED_GOLDEN_CARROT'],
+  ['POTATO_ITEM', 'ENCHANTED_POTATO', 'ENCHANTED_BAKED_POTATO'],
+  ['POISONOUS_POTATO', 'ENCHANTED_POISONOUS_POTATO'],
+  ['PUMPKIN', 'ENCHANTED_PUMPKIN', 'POLISHED_PUMPKIN'],
+  ['MELON', 'MELON_BLOCK', 'ENCHANTED_MELON', 'ENCHANTED_MELON_BLOCK'],
+  ['SUGAR_CANE', 'ENCHANTED_SUGAR', 'ENCHANTED_SUGAR_CANE'],
+  ['CACTUS', 'ENCHANTED_CACTUS_GREEN', 'ENCHANTED_CACTUS'],
+  ['INK_SACK:3', 'ENCHANTED_COCOA'],
+  ['NETHER_STALK', 'ENCHANTED_NETHER_STALK', 'MUTANT_NETHER_STALK'],
+  ['RED_MUSHROOM', 'HUGE_MUSHROOM_2', 'ENCHANTED_RED_MUSHROOM', 'ENCHANTED_HUGE_MUSHROOM_2'],
+  ['BROWN_MUSHROOM', 'HUGE_MUSHROOM_1', 'ENCHANTED_BROWN_MUSHROOM', 'ENCHANTED_HUGE_MUSHROOM_1'],
+  ['LEATHER', 'ENCHANTED_LEATHER'],
+  ['RAW_BEEF', 'ENCHANTED_RAW_BEEF'],
+  ['PORK', 'ENCHANTED_PORK', 'ENCHANTED_GRILLED_PORK'],
+  ['RAW_CHICKEN', 'ENCHANTED_RAW_CHICKEN'],
+  ['EGG', 'ENCHANTED_EGG', 'SUPER_EGG'],
+  ['FEATHER', 'ENCHANTED_FEATHER'],
+  ['MUTTON', 'ENCHANTED_MUTTON', 'ENCHANTED_COOKED_MUTTON'],
+  ['RABBIT', 'ENCHANTED_RABBIT', 'ENCHANTED_COOKED_RABBIT'],
+  ['RABBIT_FOOT', 'ENCHANTED_RABBIT_FOOT'],
+  ['RABBIT_HIDE', 'ENCHANTED_RABBIT_HIDE'],
+];
+
+// Raw items in one unit of `id`, following single-ingredient recipes down to `raw`.
+function rawPer(id, raw, depth = 0) {
+  if (id === raw) return 1;
+  if (depth > 5) return null;
+  for (const c of craftsBy.get(id) || []) {
+    if (c.inputs.length !== 1) continue;
+    const r = rawPer(c.inputs[0].id, raw, depth + 1);
+    if (r != null) return (c.inputs[0].count * r) / c.count;
+  }
+  return null;
+}
+
+async function renderFarm() {
+  const tbody = $('#farmTable tbody');
+  if (!await needMarket(tbody, 7)) return;
+  if (!npcData || !craftData) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">NPC fiyatları ya da tarifler henüz toplanmadı.</td></tr>';
+    return;
+  }
+  const amount = Number(S.farmAmount) || 0;
+  const groups = FARM_GROUPS.map((ids) => {
+    const raw = ids[0];
+    const forms = ids.map((id) => {
+      const per = rawPer(id, raw);
+      const b = market.bz[id];
+      const npc = npcData.npc[id] ?? null;
+      const unit = b ? bzSellUnit(b[0], b[1]) : null;
+      const bz = unit == null ? null : unit * (1 - S.bzTax / 100);
+      return {
+        id, per, npc, bz,
+        npcRaw: npc != null && per ? npc / per : null,
+        bzRaw: bz != null && per ? bz / per : null,
+        volume: b ? (S.sellMode === 'instant' ? b[3] : b[2]) : null,
+      };
+    }).filter((f) => f.per != null && (f.npc != null || f.bz != null));
+    let best = null;
+    for (const f of forms) {
+      for (const [where, v] of [['npc', f.npcRaw], ['bz', f.bzRaw]]) {
+        if (v != null && (!best || v > best.v)) best = { f, where, v };
+      }
+    }
+    return { raw, name: anyName(raw), forms, best };
+  }).filter((g) => g.forms.length);
+  if (S.farmSort === 'best') groups.sort((a, b) => (b.best?.v ?? -1) - (a.best?.v ?? -1));
+  else groups.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+
+  tbody.innerHTML = groups.map((g) => {
+    const bestText = g.best
+      ? `En iyisi: ${esc(anyName(g.best.f.id))} → ${g.best.where === 'npc' ? 'NPC' : 'Bazaar'} (ham başına ${coins(g.best.v)})`
+        + (amount ? ` · ${amount.toLocaleString('tr-TR')} ham = <span class="pos">${coins(g.best.v * amount)}</span>` : '')
+      : 'Fiyat yok';
+    const head = `<tr class="group"><td colspan="7">${esc(g.name)} <span class="muted small">${bestText}</span></td></tr>`;
+    return head + g.forms.map((f) => {
+      const isBest = (w) => (g.best && g.best.f === f && g.best.where === w ? ' best' : '');
+      return `<tr>
+        <td>${esc(anyName(f.id))}</td>
+        <td class="num">${f.per.toLocaleString('tr-TR')}</td>
+        <td class="num">${coins(f.npc)}</td>
+        <td class="num">${coins(f.bz)}</td>
+        <td class="num${isBest('npc')}">${coins(f.npcRaw)}</td>
+        <td class="num${isBest('bz')}">${coins(f.bzRaw)}</td>
+        <td class="num">${coins(f.volume)}</td>
+      </tr>`;
+    }).join('');
+  }).join('') || '<tr><td colspan="7" class="muted">Farming itemi bulunamadı.</td></tr>';
+  $('#farmNote').textContent = 'Her ürün için ham itemi sattığın haliyle ya da sıkıştırıp (enchanted) sattığın haliyle ham item başına kaç coin ettiği. '
+    + `En iyi seçenek yeşil çerçeveli. NPC'ye satışta vergi yoktur; Bazaar satışından %${S.bzTax} vergi düşüldü. `
+    + 'Sıkıştırma tam katlarla yapılır; artan ham itemleri ayrıca satman gerekir.';
 }
 
 // ---------- craft vs buy ----------
@@ -724,11 +827,14 @@ function wire() {
   // Controls bound to a setting; the same setting (e.g. buy mode) can appear on several tabs.
   const bound = document.querySelectorAll('[data-setting]');
   const syncBound = () => bound.forEach((el) => {
-    if (el.type === 'checkbox') el.checked = S[el.dataset.setting]; else el.value = S[el.dataset.setting];
+    const v = S[el.dataset.setting];
+    if (el.type === 'checkbox') el.checked = v;
+    else if (el.type === 'radio') el.checked = el.value === v;
+    else el.value = v;
   });
   syncBound();
   bound.forEach((el) => el.addEventListener('change', () => {
-    S[el.dataset.setting] = el.type === 'checkbox' ? el.checked : el.value;
+    S[el.dataset.setting] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Math.max(0, Number(el.value) || 0) : el.value;
     save(); syncBound(); refreshAll();
   }));
   $('#search').addEventListener('input', renderBest);

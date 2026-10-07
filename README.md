@@ -4,7 +4,7 @@ Hypixel Skyblock'taki forge tariflerinin hangisinin en çok kâr getirdiğini g�
 
 - **En kârlı:** Tüm forge tarifleri; item başına kâr, saatlik kâr, kâr oranı, maliyet veya süreye göre sıralanır. Bazaar / Auction House filtresi vardır.
 - **Karşılaştır:** Seçtiğin itemler yan yana, kâr geçmişi grafiğiyle birlikte.
-- **NPC vs Bazaar:** NPC satış fiyatı olan her Bazaar iteminde NPC'ye mi Bazaar'a mı satmanın daha iyi olduğu, ve Bazaar'dan alıp NPC'ye satmanın (NPC flip) adet başına kârı.
+- **NPC vs Bazaar:** NPC satış fiyatı olan her Bazaar iteminde NPC'ye mi Bazaar'a mı satmanın daha iyi olduğu, ve Bazaar'dan alıp NPC'ye satmanın (NPC flip) adet başına kârı. "Farming" görünümü her ekin ve hayvan ürününü ham haliyle ve sıkıştırılmış (enchanted) halleriyle karşılaştırır: ham item başına NPC ve Bazaar fiyatı, en iyi seçenek ve farmladığın miktarın toplam değeri.
 - **Craft mı al mı:** Crafting table tarifi olan her itemde hazır almak mı (Bazaar ya da AH lowest BIN) malzemeleri alıp craftlamak mı daha ucuz, ve craftlayıp satmanın kârı. İstersen malzemelerin alt tarifleri de hesaba katılır.
 - **Detay:** Bir satıra tıklayınca malzeme dökümü, her malzemenin ve çıktının fiyat geçmişi grafiği, elle fiyat girme.
 - **Profil ve ayarlar:** Kullanıcı adınla forge slot sayını ve Quick Forge seviyeni çeker; istersen bunları elle girersin.
