@@ -122,6 +122,4 @@ dialog::backdrop { background: rgba(0,0,0,.6); }
 .seg label { flex-direction: row; align-items: center; font-size: 13px; padding: 5px 12px; border-radius: 6px; cursor: pointer; color: var(--text-secondary); }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
 .seg label:has(input:checked) { background: var(--surface-2); color: var(--text-primary); }
-tr.group td { background: var(--surface-2); font-weight: 600; cursor: default; }
-tr.group td .muted { font-weight: 400; }
 td.best { outline: 1px solid var(--good); outline-offset: -3px; border-radius: 4px; }

@@ -18,7 +18,7 @@ const DEFAULTS = {
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
-  npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmAmount: 100000, farmSort: 'best',
+  npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
 };
 let S = load();
@@ -482,102 +482,47 @@ async function renderNpc() {
 }
 
 // ---------- farming view (inside NPC vs Bazaar) ----------
-// Each group starts with the raw drop; the other forms are its compressed versions.
-// How many raw items one form holds is worked out from the crafting recipes.
-const FARM_GROUPS = [
-  ['WHEAT', 'ENCHANTED_WHEAT', 'ENCHANTED_HAY_BALE'],
-  ['SEEDS', 'ENCHANTED_SEEDS', 'BOX_OF_SEEDS'],
-  ['CARROT_ITEM', 'ENCHANTED_CARROT', 'ENCHANTED_GOLDEN_CARROT'],
-  ['POTATO_ITEM', 'ENCHANTED_POTATO', 'ENCHANTED_BAKED_POTATO'],
-  ['POISONOUS_POTATO', 'ENCHANTED_POISONOUS_POTATO'],
-  ['PUMPKIN', 'ENCHANTED_PUMPKIN', 'POLISHED_PUMPKIN'],
-  ['MELON', 'MELON_BLOCK', 'ENCHANTED_MELON', 'ENCHANTED_MELON_BLOCK'],
-  ['SUGAR_CANE', 'ENCHANTED_SUGAR', 'ENCHANTED_SUGAR_CANE'],
-  ['CACTUS', 'ENCHANTED_CACTUS_GREEN', 'ENCHANTED_CACTUS'],
-  ['INK_SACK:3', 'ENCHANTED_COCOA'],
-  ['NETHER_STALK', 'ENCHANTED_NETHER_STALK', 'MUTANT_NETHER_STALK'],
-  ['RED_MUSHROOM', 'HUGE_MUSHROOM_2', 'ENCHANTED_RED_MUSHROOM', 'ENCHANTED_HUGE_MUSHROOM_2'],
-  ['BROWN_MUSHROOM', 'HUGE_MUSHROOM_1', 'ENCHANTED_BROWN_MUSHROOM', 'ENCHANTED_HUGE_MUSHROOM_1'],
-  ['LEATHER', 'ENCHANTED_LEATHER'],
-  ['RAW_BEEF', 'ENCHANTED_RAW_BEEF'],
-  ['PORK', 'ENCHANTED_PORK', 'ENCHANTED_GRILLED_PORK'],
-  ['RAW_CHICKEN', 'ENCHANTED_RAW_CHICKEN'],
-  ['EGG', 'ENCHANTED_EGG', 'SUPER_EGG'],
-  ['FEATHER', 'ENCHANTED_FEATHER'],
-  ['MUTTON', 'ENCHANTED_MUTTON', 'ENCHANTED_COOKED_MUTTON'],
-  ['RABBIT', 'ENCHANTED_RABBIT', 'ENCHANTED_COOKED_RABBIT'],
-  ['RABBIT_FOOT', 'ENCHANTED_RABBIT_FOOT'],
-  ['RABBIT_HIDE', 'ENCHANTED_RABBIT_HIDE'],
+// The farming items Mito wants compared, nothing else.
+const FARM_ITEMS = [
+  'ENCHANTED_HAY_BALE', 'ENCHANTED_GOLDEN_CARROT', 'ENCHANTED_BAKED_POTATO', 'ENCHANTED_HUGE_MUSHROOM_1',
+  'ENCHANTED_HUGE_MUSHROOM_2', 'MUTANT_NETHER_STALK', 'ENCHANTED_SUGAR_CANE', 'ENCHANTED_CACTUS',
+  'ENCHANTED_COOKIE', 'BOX_OF_SEEDS', 'ENCHANTED_MELON_BLOCK', 'POLISHED_PUMPKIN',
+  'COMPACTED_MOONFLOWER', 'COMPACTED_SUNFLOWER', 'COMPACTED_WILD_ROSE', 'FERMENTO', 'CROPIE', 'HELIANTHUS',
 ];
-
-// Raw items in one unit of `id`, following single-ingredient recipes down to `raw`.
-function rawPer(id, raw, depth = 0) {
-  if (id === raw) return 1;
-  if (depth > 5) return null;
-  for (const c of craftsBy.get(id) || []) {
-    if (c.inputs.length !== 1) continue;
-    const r = rawPer(c.inputs[0].id, raw, depth + 1);
-    if (r != null) return (c.inputs[0].count * r) / c.count;
-  }
-  return null;
-}
 
 async function renderFarm() {
   const tbody = $('#farmTable tbody');
   if (!await needMarket(tbody, 7)) return;
-  if (!npcData || !craftData) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">NPC fiyatları ya da tarifler henüz toplanmadı.</td></tr>';
+  if (!npcData) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">NPC fiyatları henüz toplanmadı.</td></tr>';
     return;
   }
-  const amount = Number(S.farmAmount) || 0;
-  const groups = FARM_GROUPS.map((ids) => {
-    const raw = ids[0];
-    const forms = ids.map((id) => {
-      const per = rawPer(id, raw);
-      const b = market.bz[id];
-      const npc = npcData.npc[id] ?? null;
-      const unit = b ? bzSellUnit(b[0], b[1]) : null;
-      const bz = unit == null ? null : unit * (1 - S.bzTax / 100);
-      return {
-        id, per, npc, bz,
-        npcRaw: npc != null && per ? npc / per : null,
-        bzRaw: bz != null && per ? bz / per : null,
-        volume: b ? (S.sellMode === 'instant' ? b[3] : b[2]) : null,
-      };
-    }).filter((f) => f.per != null && (f.npc != null || f.bz != null));
-    let best = null;
-    for (const f of forms) {
-      for (const [where, v] of [['npc', f.npcRaw], ['bz', f.bzRaw]]) {
-        if (v != null && (!best || v > best.v)) best = { f, where, v };
-      }
-    }
-    return { raw, name: anyName(raw), forms, best };
-  }).filter((g) => g.forms.length);
-  if (S.farmSort === 'best') groups.sort((a, b) => (b.best?.v ?? -1) - (a.best?.v ?? -1));
-  else groups.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-
-  tbody.innerHTML = groups.map((g) => {
-    const bestText = g.best
-      ? `En iyisi: ${esc(anyName(g.best.f.id))} → ${g.best.where === 'npc' ? 'NPC' : 'Bazaar'} (ham başına ${coins(g.best.v)})`
-        + (amount ? ` · ${amount.toLocaleString('tr-TR')} ham = <span class="pos">${coins(g.best.v * amount)}</span>` : '')
-      : 'Fiyat yok';
-    const head = `<tr class="group"><td colspan="7">${esc(g.name)} <span class="muted small">${bestText}</span></td></tr>`;
-    return head + g.forms.map((f) => {
-      const isBest = (w) => (g.best && g.best.f === f && g.best.where === w ? ' best' : '');
-      return `<tr>
-        <td>${esc(anyName(f.id))}</td>
-        <td class="num">${f.per.toLocaleString('tr-TR')}</td>
-        <td class="num">${coins(f.npc)}</td>
-        <td class="num">${coins(f.bz)}</td>
-        <td class="num${isBest('npc')}">${coins(f.npcRaw)}</td>
-        <td class="num${isBest('bz')}">${coins(f.bzRaw)}</td>
-        <td class="num">${coins(f.volume)}</td>
-      </tr>`;
-    }).join('');
-  }).join('') || '<tr><td colspan="7" class="muted">Farming itemi bulunamadı.</td></tr>';
-  $('#farmNote').textContent = 'Her ürün için ham itemi sattığın haliyle ya da sıkıştırıp (enchanted) sattığın haliyle ham item başına kaç coin ettiği. '
-    + `En iyi seçenek yeşil çerçeveli. NPC'ye satışta vergi yoktur; Bazaar satışından %${S.bzTax} vergi düşüldü. `
-    + 'Sıkıştırma tam katlarla yapılır; artan ham itemleri ayrıca satman gerekir.';
+  const list = FARM_ITEMS.map((id) => {
+    const b = market.bz[id];
+    const npc = npcData.npc[id] ?? null;
+    const unit = b ? bzSellUnit(b[0], b[1]) : null;
+    const bz = unit == null ? null : unit * (1 - S.bzTax / 100);
+    const best = npc == null && bz == null ? null : (bz ?? -Infinity) >= (npc ?? -Infinity) ? 'bz' : 'npc';
+    const lo = Math.min(npc ?? Infinity, bz ?? Infinity);
+    const diff = npc != null && bz != null ? Math.abs(bz - npc) : null;
+    return {
+      id, name: anyName(id), npc, bz, best, diff,
+      diffPct: diff != null && lo > 0 ? (diff / lo) * 100 : null,
+      volume: b ? (S.sellMode === 'instant' ? b[3] : b[2]) : null,
+    };
+  });
+  if (S.farmSort === 'name') list.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+  else list.sort((a, b) => (b.diffPct ?? -1) - (a.diffPct ?? -1));
+  tbody.innerHTML = list.map((e) => `<tr>
+      <td>${esc(e.name)}</td>
+      <td class="num${e.best === 'npc' ? ' best' : ''}">${coins(e.npc)}</td>
+      <td class="num${e.best === 'bz' ? ' best' : ''}">${coins(e.bz)}</td>
+      <td>${e.best ? `<span class="tag pos">${e.best === 'npc' ? 'NPC' : 'Bazaar'}</span>` : '—'}</td>
+      <td class="num pos">${coins(e.diff)}</td>
+      <td class="num">${e.diffPct == null ? '—' : `%${e.diffPct.toFixed(1)}`}</td>
+      <td class="num">${coins(e.volume)}</td>
+    </tr>`).join('');
+  $('#farmNote').textContent = `Daha iyi olan fiyat yeşil çerçeveli. NPC'ye satışta vergi yoktur; Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir).`;
 }
 
 // ---------- craft vs buy ----------
@@ -834,7 +779,7 @@ function wire() {
   });
   syncBound();
   bound.forEach((el) => el.addEventListener('change', () => {
-    S[el.dataset.setting] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Math.max(0, Number(el.value) || 0) : el.value;
+    S[el.dataset.setting] = el.type === 'checkbox' ? el.checked : el.value;
     save(); syncBound(); refreshAll();
   }));
   $('#search').addEventListener('input', renderBest);
