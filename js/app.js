@@ -18,7 +18,7 @@ const DEFAULTS = {
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
-  npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false,
+  npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
 };
 let S = load();
@@ -433,6 +433,10 @@ async function needMarket(tbody, cols) {
 
 // ---------- NPC vs Bazaar ----------
 async function renderNpc() {
+  const farm = S.npcView === 'farm';
+  $('#npcAll').hidden = farm;
+  $('#npcFarm').hidden = !farm;
+  if (farm) return renderFarm();
   const tbody = $('#npcTable tbody');
   if (!await needMarket(tbody, 8)) return;
   if (!npcData) {
@@ -475,6 +479,50 @@ async function renderNpc() {
     </tr>`;
   }).join('') || '<tr><td colspan="8" class="muted">Filtrelere uyan item yok.</td></tr>';
   $('#npcNote').textContent = `${list.length} item. NPC'ye satışta vergi yoktur; Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). NPC fiyatları Hypixel'in item listesinden günde bir kez alınır.`;
+}
+
+// ---------- farming view (inside NPC vs Bazaar) ----------
+// The farming items Mito wants compared, nothing else.
+const FARM_ITEMS = [
+  'ENCHANTED_HAY_BALE', 'ENCHANTED_GOLDEN_CARROT', 'ENCHANTED_BAKED_POTATO', 'ENCHANTED_HUGE_MUSHROOM_1',
+  'ENCHANTED_HUGE_MUSHROOM_2', 'MUTANT_NETHER_STALK', 'ENCHANTED_SUGAR_CANE', 'ENCHANTED_CACTUS',
+  'ENCHANTED_COOKIE', 'BOX_OF_SEEDS', 'ENCHANTED_MELON_BLOCK', 'POLISHED_PUMPKIN',
+  'COMPACTED_MOONFLOWER', 'COMPACTED_SUNFLOWER', 'COMPACTED_WILD_ROSE', 'FERMENTO', 'CROPIE', 'HELIANTHUS',
+];
+
+async function renderFarm() {
+  const tbody = $('#farmTable tbody');
+  if (!await needMarket(tbody, 7)) return;
+  if (!npcData) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">NPC fiyatları henüz toplanmadı.</td></tr>';
+    return;
+  }
+  const list = FARM_ITEMS.map((id) => {
+    const b = market.bz[id];
+    const npc = npcData.npc[id] ?? null;
+    const unit = b ? bzSellUnit(b[0], b[1]) : null;
+    const bz = unit == null ? null : unit * (1 - S.bzTax / 100);
+    const best = npc == null && bz == null ? null : (bz ?? -Infinity) >= (npc ?? -Infinity) ? 'bz' : 'npc';
+    const lo = Math.min(npc ?? Infinity, bz ?? Infinity);
+    const diff = npc != null && bz != null ? Math.abs(bz - npc) : null;
+    return {
+      id, name: anyName(id), npc, bz, best, diff,
+      diffPct: diff != null && lo > 0 ? (diff / lo) * 100 : null,
+      volume: b ? (S.sellMode === 'instant' ? b[3] : b[2]) : null,
+    };
+  });
+  if (S.farmSort === 'name') list.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+  else list.sort((a, b) => (b.diffPct ?? -1) - (a.diffPct ?? -1));
+  tbody.innerHTML = list.map((e) => `<tr>
+      <td>${esc(e.name)}</td>
+      <td class="num${e.best === 'npc' ? ' best' : ''}">${coins(e.npc)}</td>
+      <td class="num${e.best === 'bz' ? ' best' : ''}">${coins(e.bz)}</td>
+      <td>${e.best ? `<span class="tag pos">${e.best === 'npc' ? 'NPC' : 'Bazaar'}</span>` : '—'}</td>
+      <td class="num pos">${coins(e.diff)}</td>
+      <td class="num">${e.diffPct == null ? '—' : `%${e.diffPct.toFixed(1)}`}</td>
+      <td class="num">${coins(e.volume)}</td>
+    </tr>`).join('');
+  $('#farmNote').textContent = `Daha iyi olan fiyat yeşil çerçeveli. NPC'ye satışta vergi yoktur; Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir).`;
 }
 
 // ---------- craft vs buy ----------
@@ -724,7 +772,10 @@ function wire() {
   // Controls bound to a setting; the same setting (e.g. buy mode) can appear on several tabs.
   const bound = document.querySelectorAll('[data-setting]');
   const syncBound = () => bound.forEach((el) => {
-    if (el.type === 'checkbox') el.checked = S[el.dataset.setting]; else el.value = S[el.dataset.setting];
+    const v = S[el.dataset.setting];
+    if (el.type === 'checkbox') el.checked = v;
+    else if (el.type === 'radio') el.checked = el.value === v;
+    else el.value = v;
   });
   syncBound();
   bound.forEach((el) => el.addEventListener('change', () => {

@@ -118,3 +118,8 @@ dialog::backdrop { background: rgba(0,0,0,.6); }
   .player-chip { display: none; }
 }
 .tag.pos { color: var(--good); }
+.seg { display: inline-flex; gap: 4px; margin-bottom: 12px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+.seg label { flex-direction: row; align-items: center; font-size: 13px; padding: 5px 12px; border-radius: 6px; cursor: pointer; color: var(--text-secondary); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label:has(input:checked) { background: var(--surface-2); color: var(--text-primary); }
+td.best { outline: 1px solid var(--good); outline-offset: -3px; border-radius: 4px; }

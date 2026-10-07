@@ -98,6 +98,11 @@
     </section>
 
     <section id="tab-npc" class="panel">
+      <div class="seg" role="radiogroup" aria-label="Görünüm">
+        <label><input type="radio" name="npcView" value="all" data-setting="npcView"> Tüm itemler</label>
+        <label><input type="radio" name="npcView" value="farm" data-setting="npcView"> Farming</label>
+      </div>
+      <div id="npcAll">
       <div class="controls">
         <input id="npcSearch" class="search" type="search" placeholder="Item ara…">
         <label>Bazaar satışı
@@ -142,6 +147,40 @@
         </table>
       </div>
       <p class="muted small" id="npcNote">NPC'ye satışta vergi yoktur. Bazaar satışından seçili vergi (ayarlardan değişir) düşülür.</p>
+      </div>
+      <div id="npcFarm" hidden>
+        <div class="controls">
+          <label>Bazaar satışı
+            <select data-setting="sellMode">
+              <option value="offer">Sell offer</option>
+              <option value="instant">Anında satış</option>
+            </select>
+          </label>
+          <label>Sırala
+            <select data-setting="farmSort">
+              <option value="diff">Fark (%)</option>
+              <option value="name">Item adı</option>
+            </select>
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table id="farmTable">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th class="num">NPC satış</th>
+                <th class="num" title="Seçili satış yöntemiyle, Bazaar vergisi düşülmüş birim fiyat.">Bazaar satış (net)</th>
+                <th>Nereye sat</th>
+                <th class="num" title="İyi olan yerde satınca adet başına fazladan kazanılan.">Fark / adet</th>
+                <th class="num">Fark (%)</th>
+                <th class="num" title="Son 7 günde seçili satış yönteminin Bazaar hacmi.">Hacim (7g)</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="muted small" id="farmNote"></p>
+      </div>
     </section>
 
     <section id="tab-craft" class="panel">
