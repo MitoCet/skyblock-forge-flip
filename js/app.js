@@ -234,6 +234,7 @@ async function profitSeries(r) {
 }
 
 const charts = {};
+const GAP_MS = 45 * 60 * 1000;
 function drawChart(key, canvas, datasets, rangeDays) {
   charts[key]?.destroy();
   const since = Date.now() / 1000 - rangeDays * 86400;
@@ -243,7 +244,10 @@ function drawChart(key, canvas, datasets, rangeDays) {
     borderColor: SERIES[i % SERIES.length],
     backgroundColor: SERIES[i % SERIES.length],
     borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.15,
+    // Snapshots are 15 minutes apart; a longer stretch means missing data, drawn dashed.
+    segment: { borderDash: (c) => (c.p1.parsed.x - c.p0.parsed.x > GAP_MS ? [4, 4] : undefined) },
   }));
+  const xs = ds.flatMap((d) => d.data.map((p) => p.x));
   const fmtTime = (ms) => new Date(ms).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   charts[key] = new Chart(canvas, {
     type: 'line',
@@ -256,7 +260,8 @@ function drawChart(key, canvas, datasets, rangeDays) {
         tooltip: { callbacks: { title: (it) => fmtTime(it[0].parsed.x), label: (it) => `${it.dataset.label}: ${coins(it.parsed.y)}` } },
       },
       scales: {
-        x: { type: 'linear', ticks: { color: '#8f8e86', maxTicksLimit: 7, callback: (v) => fmtTime(v) }, grid: { color: '#2a2a27' } },
+        // Axis spans the data only, so it never runs past the latest snapshot.
+        x: { type: 'linear', min: xs.length ? Math.min(...xs) : undefined, max: xs.length ? Math.max(...xs) : undefined, ticks: { color: '#8f8e86', maxTicksLimit: 7, callback: (v) => fmtTime(v) }, grid: { color: '#2a2a27' } },
         y: { ticks: { color: '#8f8e86', callback: (v) => coins(v) }, grid: { color: '#2a2a27' } },
       },
     },
