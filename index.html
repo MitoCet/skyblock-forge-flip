@@ -22,6 +22,7 @@
     <button class="tab" data-tab="compare">Karşılaştır <span id="compareCount" class="badge">0</span></button>
     <button class="tab" data-tab="npc">NPC vs Bazaar</button>
     <button class="tab" data-tab="craft">Craft mı al mı</button>
+    <button class="tab" data-tab="metal">Dwarven Metal Mining</button>
     <button class="tab" data-tab="settings">Profil ve ayarlar</button>
   </nav>
 
@@ -245,6 +246,37 @@
         </table>
       </div>
       <p class="muted small" id="craftNote">Malzemeleri görmek için satıra tıkla. Tarifler NotEnoughUpdates verisinden, fiyatı olmayan malzemeler (NPC'den alınan vanilla itemler gibi) eksik sayılır.</p>
+    </section>
+
+    <section id="tab-metal" class="panel">
+      <div class="live">
+        <button class="primary live-btn" type="button" data-ah="off">Güncel fiyatları çek</button>
+        <span class="live-status muted small"></span>
+      </div>
+      <div class="controls">
+        <label>Tungsten miktarı <input type="number" min="0" step="1" data-setting="metalTungsten"></label>
+        <label>Umber miktarı <input type="number" min="0" step="1" data-setting="metalUmber"></label>
+        <label>Miktar birimi
+          <select data-setting="metalUnit">
+            <option value="ench">Enchanted</option>
+            <option value="raw">Ham (160 ham = 1 Enchanted)</option>
+          </select>
+        </label>
+        <label>Alış (Bejeweled Handle, Glacite Amalgamation)
+          <select data-setting="buyMode">
+            <option value="instant">Anında alım</option>
+            <option value="order">Buy order</option>
+          </select>
+        </label>
+        <label>Bazaar satışı
+          <select data-setting="sellMode">
+            <option value="offer">Sell offer</option>
+            <option value="instant">Anında satış</option>
+          </select>
+        </label>
+      </div>
+      <div id="metalBody"></div>
+      <p class="muted small" id="metalNote"></p>
     </section>
 
     <section id="tab-settings" class="panel">

@@ -84,7 +84,7 @@ th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: 
 th { color: var(--text-muted); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--surface-1); }
 tbody tr:hover { background: var(--surface-2); cursor: pointer; }
 tbody tr:last-child td { border-bottom: 0; }
-.tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--text-secondary); }
+.tag { white-space: nowrap; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--text-secondary); }
 .warn { color: #c98500; font-size: 12px; }
 
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }

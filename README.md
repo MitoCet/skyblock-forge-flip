@@ -6,7 +6,8 @@ Hypixel Skyblock'taki forge tariflerinin hangisinin en çok kâr getirdiğini g�
 - **Karşılaştır:** Seçtiğin itemler yan yana, kâr geçmişi grafiğiyle birlikte.
 - **NPC vs Bazaar:** NPC satış fiyatı olan her Bazaar iteminde NPC'ye mi Bazaar'a mı satmanın daha iyi olduğu, ve Bazaar'dan alıp NPC'ye satmanın (NPC flip) adet başına kârı. "Farming" görünümü seçili farming itemlerinde (Enchanted Hay Bale, Mutant Nether Wart, Polished Pumpkin, Fermento, Helianthus vb.) NPC ve Bazaar fiyatını yan yana gösterir.
 - **Craft mı al mı:** Crafting table tarifi olan her itemde hazır almak mı (Bazaar ya da AH lowest BIN) malzemeleri alıp craftlamak mı daha ucuz, ve craftlayıp satmanın kârı. İstersen malzemelerin alt tarifleri de hesaba katılır.
-- **Güncel fiyatları çek:** NPC vs Bazaar ve Craft mı al mı sekmelerindeki buton, fiyatları o an doğrudan Hypixel'den alır (istersen AH'ı da). Bu fiyatlar hiçbir yere kaydedilmez ve grafiklere işlenmez; sayfayı yenileyince 15 dakikalık kayda dönülür.
+- **Dwarven Metal Mining:** Kazdığın Tungsten ve Umber'i (ham ya da Enchanted miktar olarak girersin) ham/Enchanted olarak satmak, anahtara (Tungsten/Umber Key) forgelamak, Refined'a forgelamak ya da Refined'dan Plate'e forgelamak arasında hangisinin daha çok kazandırdığını gösterir. Bejeweled Handle ve Glacite Amalgamation maliyeti, Bazaar vergisi, forge süresi ve slot-saat başına fark hesaba katılır.
+- **Güncel fiyatları çek:** NPC vs Bazaar, Craft mı al mı ve Dwarven Metal Mining sekmelerindeki buton, fiyatları o an doğrudan Hypixel'den alır (istersen AH'ı da). Bu fiyatlar hiçbir yere kaydedilmez ve grafiklere işlenmez; sayfayı yenileyince 15 dakikalık kayda dönülür.
 - **Detay:** Bir satıra tıklayınca malzeme dökümü, her malzemenin ve çıktının fiyat geçmişi grafiği, elle fiyat girme.
 - **Profil ve ayarlar:** Kullanıcı adınla forge slot sayını ve Quick Forge seviyeni çeker; istersen bunları elle girersin.
 
