@@ -21,6 +21,7 @@ const DEFAULTS = {
   liveAh: false,
   npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
+  metalTungsten: 640, metalUmber: 640, metalUnit: 'ench',
 };
 let S = load();
 function load() {
@@ -437,7 +438,7 @@ async function needMarket(tbody, cols) {
   }
 }
 
-// ---------- live prices (NPC and craft tabs) ----------
+// ---------- live prices (NPC, craft and metal tabs) ----------
 // "Güncel fiyatları çek" reads Hypixel directly and only replaces `market` in memory:
 // nothing is written to the data branch, history or charts.
 const roundP = (v) => (v == null ? null : Math.round(v * 10) / 10);
@@ -549,12 +550,13 @@ function renderLiveStatus(text) {
   });
 }
 
-async function liveClick() {
+async function liveClick(ev) {
   if (liveBusy) return;
+  const withAh = S.liveAh && ev?.currentTarget?.dataset.ah !== 'off';
   liveBusy = true;
   document.querySelectorAll('.live-btn').forEach((b) => { b.disabled = true; });
   try {
-    await fetchLive(S.liveAh, renderLiveStatus);
+    await fetchLive(withAh, renderLiveStatus);
     renderLiveStatus();
     refreshAll();
   } catch (err) {
@@ -804,6 +806,150 @@ async function renderCraft() {
     + 'Fiyatı olmayan malzemeler (NPC\'den alınan vanilla itemler gibi) eksik sayılır.';
 }
 
+// ---------- Dwarven metal mining ----------
+// Mined Tungsten / Umber, compared by what the same amount of Enchanted metal
+// becomes: sold as is, forged into keys, or forged to Refined and then to Plates.
+const METALS = [
+  { name: 'Tungsten', setting: 'metalTungsten', raw: 'TUNGSTEN', ench: 'ENCHANTED_TUNGSTEN', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE', key: 'TUNGSTEN_KEY' },
+  { name: 'Umber', setting: 'metalUmber', raw: 'UMBER', ench: 'ENCHANTED_UMBER', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE', key: 'UMBER_KEY' },
+];
+const forgeRecipe = (id) => recipes.find((r) => r.id === id);
+// Raw pieces per Enchanted, from the crafting table recipe (160 today).
+function enchRatio(m) {
+  const c = craftsBy.get(m.ench)?.find((x) => x.inputs.length === 1 && x.inputs[0].id === m.raw);
+  return c ? c.inputs[0].count / c.count : 160;
+}
+
+// Extra ingredients of a forge recipe (everything but `skip`), bought at the chosen buy mode.
+function extras(r, skip) {
+  return r.inputs.filter((i) => i.id !== skip).map((i) => {
+    const b = marketBuy(i.id);
+    return { id: i.id, count: i.count, unit: b.unit, total: b.unit == null ? null : b.unit * i.count };
+  });
+}
+
+// One route: `n` forges of the product, `leftover` Enchanted sold as is.
+// `stages` are [jobs, seconds per job] run back to back on the forge slots.
+function metalRoute(m, label, product, n, extraCost, leftover, stages, missing) {
+  const { slots, qfLevel } = effective();
+  const k = 1 - qfPercent(qfLevel) / 100;
+  const sale = marketSell(product);
+  const enchSale = marketSell(m.ench);
+  const leftoverNet = leftover > 0 ? (enchSale.net == null ? null : enchSale.net * leftover) : 0;
+  const ok = !missing && sale.net != null && extraCost != null && leftoverNet != null;
+  const slotSec = stages.reduce((t, [jobs, sec]) => t + jobs * sec * k, 0);
+  const wallSec = stages.reduce((t, [jobs, sec]) => t + Math.ceil(jobs / slots) * sec * k, 0);
+  return {
+    label, product, n, extraCost, leftover,
+    gross: sale.net == null ? null : sale.net * n,
+    total: ok ? sale.net * n - extraCost + leftoverNet : null,
+    slotSec, wallSec, demand: sale.demand,
+  };
+}
+
+function metalRoutes(m, enchAmount) {
+  const ratio = enchRatio(m);
+  const rows = [];
+  const raw = marketSell(m.raw);
+  if (raw.net != null) rows.push(metalRoute(m, 'Ham olarak sat', m.raw, enchAmount * ratio, 0, 0, [], false));
+  rows.push(metalRoute(m, 'Enchanted olarak sat', m.ench, enchAmount, 0, 0, [], false));
+
+  const keyR = forgeRecipe(m.key);
+  if (keyR) {
+    const per = keyR.inputs.find((i) => i.id === m.ench)?.count;
+    const n = per ? Math.floor(enchAmount / per) : 0;
+    const ex = extras(keyR, m.ench);
+    const cost = ex.some((e) => e.total == null) ? null : ex.reduce((t, e) => t + e.total, 0) * n;
+    rows.push({ ...metalRoute(m, 'Anahtar', m.key, n, cost, enchAmount - n * per, [[n, keyR.duration]], !per), extras: ex, per });
+  }
+
+  const refR = forgeRecipe(m.refined);
+  const refPer = refR?.inputs.find((i) => i.id === m.ench)?.count;
+  if (refR && refPer) {
+    const n = Math.floor(enchAmount / refPer);
+    const ex = extras(refR, m.ench);
+    const cost = ex.some((e) => e.total == null) ? null : ex.reduce((t, e) => t + e.total, 0) * n;
+    rows.push({ ...metalRoute(m, 'Refined', m.refined, n, cost, enchAmount - n * refPer, [[n, refR.duration]], false), extras: ex, per: refPer });
+
+    const plateR = forgeRecipe(m.plate);
+    const perPlate = plateR?.inputs.find((i) => i.id === m.refined)?.count;
+    if (plateR && perPlate) {
+      const p = Math.floor(enchAmount / (refPer * perPlate));
+      const ex2 = extras(plateR, m.refined);
+      const one = ex2.some((e) => e.total == null) || cost == null ? null : ex2.reduce((t, e) => t + e.total, 0);
+      const refCost = ex.reduce((t, e) => t + (e.total ?? 0), 0) * perPlate;
+      rows.push({
+        ...metalRoute(m, 'Refined → Plate', m.plate, p, one == null ? null : (one + refCost) * p,
+          enchAmount - p * refPer * perPlate, [[p * perPlate, refR.duration], [p, plateR.duration]], false),
+        extras: ex2, per: refPer * perPlate,
+      });
+    }
+  }
+  return rows;
+}
+
+async function renderMetal() {
+  const body = $('#metalBody');
+  if (!recipes.length) { body.innerHTML = '<div class="empty">Forge tarifleri yükleniyor…</div>'; return; }
+  if (!market) {
+    body.innerHTML = '<div class="empty">Fiyatlar yükleniyor…</div>';
+    try { await loadExtra(); } catch (err) {
+      console.error(err);
+      body.innerHTML = '<div class="empty">Bu bölümün verisi henüz yok. Fiyat toplayıcı bir sonraki çalışmasında (15 dakikada bir) oluşturacak.</div>';
+      return;
+    }
+  }
+  const { slots } = effective();
+  body.innerHTML = METALS.map((m) => {
+    const amount = Math.max(0, Number(S[m.setting]) || 0);
+    const ench = S.metalUnit === 'raw' ? amount / enchRatio(m) : amount;
+    const rows = metalRoutes(m, ench);
+    const base = rows.find((r) => r.product === m.ench)?.total;
+    const best = rows.reduce((b, r) => (r.total != null && r.n > 0 && (!b || r.total > b.total) ? r : b), null);
+    const tr = rows.map((r) => {
+      const diff = r.total != null && base != null ? r.total - base : null;
+      const perHour = diff != null && r.slotSec > 0 ? diff / (r.slotSec / 3600) : null;
+      const dcls = diff == null || Math.abs(diff) < 0.5 ? '' : diff > 0 ? 'pos' : 'neg';
+      const ex = (r.extras || []).filter((e) => e.count > 0)
+        .map((e) => `${e.count}× ${esc(anyName(e.id))} (${coins(e.unit)})`).join(', ');
+      const what = `${r.n.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}× ${esc(anyName(r.product))}`
+        + (r.per ? ` <span class="muted small">(${r.per} Enchanted/adet)</span>` : '')
+        + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${r.leftover.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Enchanted artar, olduğu gibi satılır</span>` : '');
+      return `<tr>
+        <td>${esc(r.label)}${r === best ? ' <span class="tag pos">En kârlı</span>' : ''}</td>
+        <td>${what}${ex ? `<br><span class="muted small">Ek: ${ex}</span>` : ''}</td>
+        <td class="num">${r.extraCost ? coins(r.extraCost) : '—'}</td>
+        <td class="num">${coins(r.gross)}</td>
+        <td class="num${r === best ? ' best' : ''}">${coins(r.total)}</td>
+        <td class="num">${ench > 0 && r.total != null ? coins(r.total / ench) : '—'}</td>
+        <td class="num ${dcls}">${r.product === m.ench ? '—' : coins(diff)}</td>
+        <td class="num">${r.slotSec ? duration(r.wallSec) : '—'}</td>
+        <td class="num ${dcls}">${coins(perHour)}</td>
+        <td class="num">${r.demand == null ? '—' : `${coins(r.demand)}/hf`}</td>
+      </tr>`;
+    }).join('');
+    const raw = S.metalUnit === 'raw' ? amount : amount * enchRatio(m);
+    return `<h3>${m.name} <span class="muted small">${ench.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Enchanted · ${raw.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ham</span></h3>
+      <div class="table-wrap"><table>
+        <thead><tr>
+          <th>Yol</th><th>Ne çıkar</th>
+          <th class="num" title="Satın alınan ek malzemelerin (Bejeweled Handle, Glacite Amalgamation) toplamı.">Ek maliyet</th>
+          <th class="num" title="Çıkan itemlerin seçili satış yöntemiyle, vergi düşülmüş toplamı.">Satış (net)</th>
+          <th class="num" title="Satış − ek maliyet + artan Enchanted'ın satışı. Hepsi aynı miktar metalden.">Toplam kazanç</th>
+          <th class="num">Enchanted başına</th>
+          <th class="num" title="Enchanted olarak satmaya göre fazladan kazanç.">Enchanted satışına göre</th>
+          <th class="num" title="Seçili slot sayınla ve Quick Forge indirimiyle tüm forgeların bitme süresi.">Forge süresi (${slots} slot)</th>
+          <th class="num" title="Fazladan kazanç ÷ harcanan forge slot-saati.">Fark / slot-saat</th>
+          <th class="num" title="Son 7 günde seçili satış yönteminin Bazaar hacmi.">Hacim (7g)</th>
+        </tr></thead>
+        <tbody>${tr}</tbody>
+      </table></div>`;
+  }).join('');
+  $('#metalNote').textContent = `Tarifler NotEnoughUpdates verisinden: anahtar ve Refined doğrudan Enchanted metalden, Plate ise Refined + Glacite Amalgamation ile forgelanır. `
+    + `Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). Bir sonraki ürüne yetmeyen metal Enchanted olarak satılmış sayılır. `
+    + 'Plate süresine önce Refined forgeları, sonra Plate forgeları dahildir.';
+}
+
 // ---------- profile ----------
 async function uuidFor(name) {
   try {
@@ -896,6 +1042,7 @@ function refreshAll() {
   if ($('#tab-compare').classList.contains('active')) renderCompare();
   if ($('#tab-npc').classList.contains('active')) renderNpc();
   if ($('#tab-craft').classList.contains('active')) renderCraft();
+  if ($('#tab-metal').classList.contains('active')) renderMetal();
 }
 
 function wire() {
@@ -905,6 +1052,7 @@ function wire() {
     if (t.dataset.tab === 'compare') renderCompare();
     if (t.dataset.tab === 'npc') renderNpc();
     if (t.dataset.tab === 'craft') renderCraft();
+    if (t.dataset.tab === 'metal') renderMetal();
   }));
   // Controls bound to a setting; the same setting (e.g. buy mode) can appear on several tabs.
   const bound = document.querySelectorAll('[data-setting]');
