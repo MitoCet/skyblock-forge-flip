@@ -22,6 +22,7 @@ const DEFAULTS = {
   npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
   metalTungsten: 640, metalUmber: 640, metalUnit: 'ench',
+  bzOrders: [], orderWatch: false, orderPoll: '30', orderSound: true,
 };
 let S = load();
 function load() {
@@ -950,6 +951,218 @@ async function renderMetal() {
     + 'Plate süresine önce Refined forgeları, sonra Plate forgeları dahildir.';
 }
 
+// ---------- Bazaar order watcher ----------
+// Hypixel's API does not expose a player's own Bazaar orders, so the orders are
+// entered by hand. While the page is open the Bazaar is polled and an order
+// counts as outbid when someone has a better price: a higher buy order, or a
+// lower sell offer.
+const EPS = 0.05; // Bazaar prices move in 0.1 steps
+let orderTimer = null, orderBusy = false, orderBook = null, orderBookAt = 0, orderCheckedAt = null, orderError = '';
+let audioCtx = null, titleTimer = null, unseen = 0;
+const orderSeen = new Map(); // order id → last state, so each outbid notifies once
+const BASE_TITLE = document.title;
+
+const price1 = (v) => v.toLocaleString('tr-TR', { maximumFractionDigits: 1 });
+
+function orderState(o) {
+  // Added or repriced after Hypixel's last snapshot: wait for a newer one.
+  if (!orderBook || o.changedAt > orderBookAt) return { state: 'unknown' };
+  const p = orderBook[o.item];
+  if (!p) return { state: 'missing' };
+  // sell_summary holds the buy orders (highest first), buy_summary the sell offers (lowest first).
+  const buy = o.type === 'buy';
+  const levels = (buy ? p.sell_summary : p.buy_summary) || [];
+  const better = (price) => (buy ? price > o.price + EPS : price < o.price - EPS);
+  const top = levels[0]?.pricePerUnit ?? null;
+  const ahead = levels.filter((l) => better(l.pricePerUnit));
+  const res = {
+    top, aheadAmount: ahead.reduce((t, l) => t + l.amount, 0), aheadOrders: ahead.reduce((t, l) => t + l.orders, 0),
+  };
+  if (ahead.length) return { ...res, state: 'outbid', suggest: roundP(buy ? top + 0.1 : Math.max(0.1, top - 0.1)) };
+  // Nothing at or past our price: the order has filled, been cancelled, or was typed wrong.
+  if (top == null || (buy ? top < o.price - EPS : top > o.price + EPS)) return { ...res, state: 'gone' };
+  return { ...res, state: 'top', tied: Math.max(0, (levels[0].orders || 1) - 1) };
+}
+
+async function pollOrders() {
+  if (orderBusy) return;
+  orderBusy = true;
+  try {
+    const res = await getJson(`${HYPIXEL}/bazaar`);
+    if (!res.success) throw new Error(res.cause || 'Hypixel hata verdi');
+    orderBook = res.products || {};
+    orderBookAt = res.lastUpdated || Date.now();
+    orderCheckedAt = new Date();
+    orderError = '';
+    checkOutbids();
+  } catch (err) {
+    console.error(err);
+    orderError = err instanceof TypeError ? 'Hypixel\'e bağlanılamadı, bir sonraki kontrolde tekrar denenecek.' : `Fiyatlar alınamadı: ${err.message}`;
+  } finally {
+    orderBusy = false;
+    renderOrders();
+  }
+}
+
+function checkOutbids() {
+  const fresh = [];
+  for (const o of S.bzOrders) {
+    const st = orderState(o);
+    if (st.state === 'outbid' && orderSeen.get(o.id) !== 'outbid') fresh.push([o, st]);
+    orderSeen.set(o.id, st.state);
+  }
+  if (!fresh.length) return;
+  unseen += fresh.length;
+  for (const [o, st] of fresh) {
+    const what = o.type === 'buy' ? 'buy order' : 'sell offer';
+    notify(`Outbid: ${anyName(o.item)}`,
+      `${price1(o.price)} fiyatlı ${what} geçildi. En iyi fiyat ${price1(st.top)}, önünde ${st.aheadAmount.toLocaleString('tr-TR')} adet.`, o.id);
+  }
+  if (S.orderSound) beep();
+  flashTitle();
+}
+
+function notify(title, body, tag) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(title, { body, tag, renotify: true });
+    n.onclick = () => { window.focus(); document.querySelector('.tab[data-tab=orders]').click(); n.close(); };
+  } catch (err) { console.error(err); } // some mobile browsers only allow service-worker notifications
+}
+
+function beep() {
+  if (!audioCtx) return; // needs a click on the page first
+  const t = audioCtx.currentTime;
+  [0, 0.25].forEach((d) => {
+    const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, t + d);
+    gain.gain.exponentialRampToValueAtTime(0.25, t + d + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.18);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t + d); osc.stop(t + d + 0.2);
+  });
+}
+
+// Tab title blinks while there are outbids the user has not looked at.
+function flashTitle() {
+  clearInterval(titleTimer);
+  let on = false;
+  titleTimer = setInterval(() => {
+    on = !on;
+    document.title = on ? `(${unseen}) Outbid oldun!` : BASE_TITLE;
+  }, 1000);
+}
+function markSeen() {
+  if (document.hidden || !$('#tab-orders').classList.contains('active')) return;
+  unseen = 0;
+  clearInterval(titleTimer); titleTimer = null;
+  document.title = BASE_TITLE;
+}
+
+function startWatch() {
+  clearInterval(orderTimer);
+  orderTimer = setInterval(pollOrders, Math.max(15, Number(S.orderPoll) || 30) * 1000);
+  pollOrders();
+}
+function stopWatch() {
+  clearInterval(orderTimer);
+  orderTimer = null;
+  renderOrders();
+}
+
+async function toggleWatch() {
+  try { audioCtx ??= new AudioContext(); await audioCtx.resume(); } catch { /* no audio */ }
+  S.orderWatch = !orderTimer; save();
+  if (S.orderWatch) {
+    if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
+    startWatch();
+  } else stopWatch();
+}
+
+// Bazaar item names for the item field, from the collected market data.
+async function fillItemList() {
+  try { await loadExtra(); } catch { return; }
+  const ids = Object.keys(market.bz);
+  $('#bzItems').innerHTML = ids.map((id) => `<option value="${esc(anyName(id))}">`).sort().join('');
+  renderOrders(); // names are known now
+}
+function itemId(text) {
+  const t = text.trim().toLowerCase();
+  if (!t) return null;
+  const ids = new Set([...Object.keys(market?.bz || {}), ...Object.keys(orderBook || {})]);
+  for (const id of ids) if (id.toLowerCase() === t || anyName(id).toLowerCase() === t) return id;
+  return null;
+}
+
+function addOrder(ev) {
+  ev.preventDefault();
+  const status = $('#orderFormStatus');
+  const item = itemId($('#orderItem').value);
+  const price = Number($('#orderPrice').value);
+  const amount = Number($('#orderAmount').value) || null;
+  if (!item) { status.textContent = 'Bu isimde bir Bazaar itemi bulunamadı. Listeden seç.'; return; }
+  if (!(price > 0)) { status.textContent = 'Geçerli bir fiyat gir.'; return; }
+  S.bzOrders = [...S.bzOrders, { id: Date.now().toString(36), item, type: $('#orderType').value, price: roundP(price), amount, changedAt: Date.now() }];
+  save();
+  status.textContent = `${anyName(item)} eklendi.`;
+  $('#orderItem').value = ''; $('#orderPrice').value = ''; $('#orderAmount').value = '';
+  renderOrders();
+  if (orderTimer) pollOrders();
+}
+
+function setOrderPrice(id, price) {
+  const o = S.bzOrders.find((x) => x.id === id);
+  if (!o || !(price > 0)) return;
+  o.price = roundP(price);
+  o.changedAt = Date.now();
+  orderSeen.delete(id); // a new price can be outbid again
+  save();
+  renderOrders();
+  if (orderTimer) pollOrders();
+}
+
+const STATE_TAG = {
+  outbid: '<span class="tag neg">Outbid</span>',
+  top: '<span class="tag pos">En üstte</span>',
+  gone: '<span class="tag" title="Bu fiyatta ya da daha iyisinde emir yok. Emrin dolmuş, iptal edilmiş ya da fiyat yanlış girilmiş olabilir.">Listede yok</span>',
+  missing: '<span class="tag">Bazaar\'da yok</span>',
+  unknown: '<span class="muted">Kontrol bekleniyor</span>',
+};
+
+function renderOrders() {
+  const watching = !!orderTimer;
+  $('#orderWatchBtn').textContent = watching ? 'İzlemeyi durdur' : 'İzlemeyi başlat';
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  $('#notifyState').textContent = {
+    granted: 'Tarayıcı bildirimleri açık.',
+    denied: 'Tarayıcı bildirimleri engelli; tarayıcının site ayarlarından izin verebilirsin. Ses ve sekme başlığı yine çalışır.',
+    default: 'Tarayıcı bildirimlerine henüz izin verilmedi.',
+    unsupported: 'Bu tarayıcı bildirim desteklemiyor; ses ve sekme başlığı kullanılır.',
+  }[perm];
+  $('#notifyBtn').hidden = perm !== 'default';
+  const time = orderCheckedAt?.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  $('#orderWatchStatus').textContent = orderError
+    || (watching ? `İzleniyor, ${S.orderPoll} saniyede bir kontrol ediliyor.${time ? ` Son kontrol: ${time}.` : ''}`
+      : time ? `İzleme durdu. Son kontrol: ${time}.` : 'İzleme kapalı.');
+
+  const states = S.bzOrders.map((o) => [o, orderState(o)]);
+  const outbid = states.filter(([, st]) => st.state === 'outbid').length;
+  $('#outbidCount').hidden = !outbid;
+  $('#outbidCount').textContent = outbid;
+  $('#orderTable tbody').innerHTML = states.map(([o, st]) => `<tr data-id="${esc(o.id)}" class="${st.state === 'outbid' ? 'outbid' : ''}">
+      <td>${esc(anyName(o.item))}${o.amount ? ` <span class="muted">×${o.amount.toLocaleString('tr-TR')}</span>` : ''}</td>
+      <td><span class="tag">${o.type === 'buy' ? 'Buy order' : 'Sell offer'}</span></td>
+      <td class="num"><input class="order-price" type="number" min="0" step="0.1" value="${o.price}" aria-label="Fiyatını değiştir"></td>
+      <td class="num">${st.top == null ? '—' : price1(st.top)}</td>
+      <td>${STATE_TAG[st.state]}${st.tied ? ` <span class="muted small">aynı fiyatta ${st.tied} emir daha</span>` : ''}</td>
+      <td class="num">${st.state === 'outbid' ? `${coins(st.aheadAmount)} <span class="muted small">(${st.aheadOrders} emir)</span>` : '—'}</td>
+      <td class="num">${st.suggest != null ? `${price1(st.suggest)} <button class="ghost small" data-apply="${st.suggest}" title="Oyunda emrini bu fiyatla yeniledikten sonra bas.">Uygula</button>` : '—'}</td>
+      <td><button class="ghost" data-del="1">Sil</button></td>
+    </tr>`).join('') || '<tr><td colspan="8" class="muted">Henüz emir eklemedin.</td></tr>';
+  markSeen();
+}
+
 // ---------- profile ----------
 async function uuidFor(name) {
   try {
@@ -1043,6 +1256,7 @@ function refreshAll() {
   if ($('#tab-npc').classList.contains('active')) renderNpc();
   if ($('#tab-craft').classList.contains('active')) renderCraft();
   if ($('#tab-metal').classList.contains('active')) renderMetal();
+  renderOrders();
 }
 
 function wire() {
@@ -1053,6 +1267,7 @@ function wire() {
     if (t.dataset.tab === 'npc') renderNpc();
     if (t.dataset.tab === 'craft') renderCraft();
     if (t.dataset.tab === 'metal') renderMetal();
+    if (t.dataset.tab === 'orders') { renderOrders(); fillItemList(); }
   }));
   // Controls bound to a setting; the same setting (e.g. buy mode) can appear on several tabs.
   const bound = document.querySelectorAll('[data-setting]');
@@ -1109,6 +1324,22 @@ function wire() {
       save(); refreshAll();
     });
   }
+  $('#orderForm').addEventListener('submit', addOrder);
+  $('#orderWatchBtn').addEventListener('click', toggleWatch);
+  $('#notifyBtn').addEventListener('click', async () => { await Notification.requestPermission(); renderOrders(); });
+  document.querySelector('[data-setting=orderPoll]').addEventListener('change', () => { if (orderTimer) startWatch(); });
+  document.addEventListener('visibilitychange', markSeen);
+  $('#orderTable tbody').addEventListener('click', (ev) => {
+    const id = ev.target.closest('tr[data-id]')?.dataset.id;
+    if (!id) return;
+    if (ev.target.dataset.del) {
+      S.bzOrders = S.bzOrders.filter((o) => o.id !== id); orderSeen.delete(id); save(); renderOrders();
+    } else if (ev.target.dataset.apply) setOrderPrice(id, Number(ev.target.dataset.apply));
+  });
+  $('#orderTable tbody').addEventListener('change', (ev) => {
+    if (!ev.target.classList.contains('order-price')) return;
+    setOrderPrice(ev.target.closest('tr[data-id]').dataset.id, Number(ev.target.value));
+  });
   $('#overrideList').addEventListener('click', (ev) => {
     const id = ev.target.dataset.clear;
     if (!id) return;
@@ -1119,6 +1350,10 @@ function wire() {
 async function main() {
   wire();
   renderSettings();
+  renderOrders();
+  // Keep watching across reloads; notifications already allowed stay allowed.
+  if (S.orderWatch && S.bzOrders.length) startWatch();
+  if (S.bzOrders.length) fillItemList();
   try {
     await loadData();
   } catch (err) {

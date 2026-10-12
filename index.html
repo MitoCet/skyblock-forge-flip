@@ -23,6 +23,7 @@
     <button class="tab" data-tab="npc">NPC vs Bazaar</button>
     <button class="tab" data-tab="craft">Craft mı al mı</button>
     <button class="tab" data-tab="metal">Dwarven Metal Mining</button>
+    <button class="tab" data-tab="orders">Bazaar emirlerim <span id="outbidCount" class="badge alert" hidden>0</span></button>
     <button class="tab" data-tab="settings">Profil ve ayarlar</button>
   </nav>
 
@@ -277,6 +278,61 @@
       </div>
       <div id="metalBody"></div>
       <p class="muted small" id="metalNote"></p>
+    </section>
+
+    <section id="tab-orders" class="panel">
+      <div class="cards">
+        <form class="card" id="orderForm" autocomplete="off">
+          <h3>Emir ekle</h3>
+          <label>Item <input id="orderItem" list="bzItems" placeholder="Item adı ya da ID" required></label>
+          <datalist id="bzItems"></datalist>
+          <label>Tür
+            <select id="orderType">
+              <option value="buy">Buy order (alış emri)</option>
+              <option value="sell">Sell offer (satış emri)</option>
+            </select>
+          </label>
+          <label>Birim fiyat <input id="orderPrice" type="number" min="0" step="0.1" required></label>
+          <label>Adet <input id="orderAmount" type="number" min="1" step="1" placeholder="isteğe bağlı"></label>
+          <button class="primary" type="submit">Ekle</button>
+          <p id="orderFormStatus" class="small"></p>
+        </form>
+        <div class="card">
+          <h3>İzleme</h3>
+          <button id="orderWatchBtn" class="primary" type="button">İzlemeyi başlat</button>
+          <label>Kontrol aralığı
+            <select data-setting="orderPoll">
+              <option value="15">15 saniye</option>
+              <option value="30">30 saniye</option>
+              <option value="60">1 dakika</option>
+              <option value="120">2 dakika</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" data-setting="orderSound"> Outbid olunca ses çal</label>
+          <p class="small" id="notifyState"></p>
+          <button id="notifyBtn" class="ghost" type="button" hidden>Bildirimlere izin ver</button>
+          <p class="muted small" id="orderWatchStatus"></p>
+        </div>
+      </div>
+      <h3>Emirlerin</h3>
+      <div class="table-wrap">
+        <table id="orderTable">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Tür</th>
+              <th class="num">Senin fiyatın</th>
+              <th class="num" title="Buy order için en yüksek alış emri, sell offer için en düşük satış emri.">En iyi fiyat</th>
+              <th>Durum</th>
+              <th class="num" title="Senin fiyatından daha iyi fiyattaki emirlerin toplam adedi.">Önündeki adet</th>
+              <th class="num" title="Tekrar en üste çıkmak için girmen gereken fiyat.">Önerilen fiyat</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small">Hypixel API'si oyuncunun kendi Bazaar emirlerini vermiyor, bu yüzden emirlerini burada elle giriyorsun. Sayfa açıkken Bazaar fiyatları seçtiğin aralıkla kontrol edilir; biri fiyatını geçince tarayıcı bildirimi, ses ve sekme başlığıyla haber verilir. Sayfa kapalıyken kontrol yapılmaz, arka plandaki sekmelerde tarayıcı kontrolü dakikada bire kadar yavaşlatabilir. Emrin dolunca ya da iptal edince buradan sil.</p>
     </section>
 
     <section id="tab-settings" class="panel">
