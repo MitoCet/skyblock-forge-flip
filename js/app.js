@@ -21,7 +21,7 @@ const DEFAULTS = {
   liveAh: false,
   npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
-  metalTungsten: 640, metalUmber: 640, metalUnit: 'ench',
+  metalTungsten: 640, metalUmber: 640, metalUnit: 'ench', metalOwnPlates: false,
 };
 let S = load();
 function load() {
@@ -944,10 +944,75 @@ async function renderMetal() {
         </tr></thead>
         <tbody>${tr}</tbody>
       </table></div>`;
-  }).join('');
+  }).join('') + perfectSection();
   $('#metalNote').textContent = `Tarifler NotEnoughUpdates verisinden: anahtar ve Refined doğrudan Enchanted metalden, Plate ise Refined + Glacite Amalgamation ile forgelanır. `
     + `Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). Bir sonraki ürüne yetmeyen metal Enchanted olarak satılmış sayılır. `
     + 'Plate süresine önce Refined forgeları, sonra Plate forgeları dahildir.';
+}
+
+// Perfect Plate (Mithril + Tungsten + Umber Plate) and Skeleton Key (Perfect Plate + Bejeweled Handle).
+// The key is compared bought-Perfect-Plate vs forging the Perfect Plate from the three plates.
+const OWN_PLATES = ['TUNGSTEN_PLATE', 'UMBER_PLATE'];
+function plateInput(id, count) {
+  // With "own plates" on, a Tungsten/Umber Plate costs what selling it would bring.
+  const own = S.metalOwnPlates && OWN_PLATES.includes(id);
+  const unit = own ? marketSell(id).net : marketBuy(id).unit;
+  return { id, count, unit, total: unit == null ? null : unit * count, own };
+}
+function perfectRoute(label, product, inputs, stages) {
+  const k = 1 - qfPercent(effective().qfLevel) / 100;
+  const cost = inputs.some((i) => i.total == null) ? null : inputs.reduce((t, i) => t + i.total, 0);
+  const sale = marketSell(product);
+  return {
+    label, product, inputs, cost, sale: sale.net, demand: sale.demand,
+    profit: cost != null && sale.net != null ? sale.net - cost : null,
+    wallSec: stages.reduce((t, sec) => t + sec * k, 0),
+  };
+}
+function perfectSection() {
+  const pp = forgeRecipe('PERFECT_PLATE'), sk = forgeRecipe('SKELETON_KEY');
+  if (!pp || !sk) return '';
+  const ppIn = pp.inputs.map((i) => plateInput(i.id, i.count));
+  const skRest = sk.inputs.filter((i) => i.id !== 'PERFECT_PLATE').map((i) => plateInput(i.id, i.count));
+  const ppCount = sk.inputs.find((i) => i.id === 'PERFECT_PLATE')?.count || 1;
+  const rows = [
+    perfectRoute('Perfect Plate forgela, sat', 'PERFECT_PLATE', ppIn, [pp.duration]),
+    perfectRoute('Skeleton Key: hazır Perfect Plate ile', 'SKELETON_KEY', [plateInput('PERFECT_PLATE', ppCount), ...skRest], [sk.duration]),
+    perfectRoute('Skeleton Key: 3 plate ile (önce Perfect Plate)', 'SKELETON_KEY',
+      [...ppIn.map((i) => ({ ...i, count: i.count * ppCount, total: i.total == null ? null : i.total * ppCount })), ...skRest],
+      [pp.duration, sk.duration]),
+  ];
+  const [, viaPerfect, viaPlates] = rows;
+  const cheaper = viaPerfect.cost != null && viaPlates.cost != null
+    ? (viaPerfect.cost <= viaPlates.cost ? viaPerfect : viaPlates) : null;
+  const tr = rows.map((r) => {
+    const cls = r.profit == null ? '' : r.profit >= 0 ? 'pos' : 'neg';
+    const ins = r.inputs.map((i) => `${i.count}× ${esc(anyName(i.id))} (${coins(i.unit)}${i.own ? ', senin' : ''})`).join('<br>');
+    return `<tr>
+      <td>${esc(r.label)}${r === cheaper ? ' <span class="tag pos">Daha ucuz</span>' : ''}</td>
+      <td class="small">${ins}</td>
+      <td class="num${r === cheaper ? ' best' : ''}">${coins(r.cost)}</td>
+      <td class="num">${coins(r.sale)}</td>
+      <td class="num ${cls}">${coins(r.profit)}</td>
+      <td class="num">${duration(r.wallSec)}</td>
+      <td class="num">${r.demand == null ? '—' : `${coins(r.demand)}/hf`}</td>
+    </tr>`;
+  }).join('');
+  const diff = cheaper ? Math.abs(viaPerfect.cost - viaPlates.cost) : null;
+  return `<h3>Perfect Plate ve Skeleton Key</h3>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>Yol</th><th>Malzemeler</th>
+        <th class="num" title="Seçili alış yöntemiyle malzemelerin toplamı.">Maliyet</th>
+        <th class="num" title="Seçili satış yöntemiyle, vergi düşülmüş satış.">Satış (net)</th>
+        <th class="num">Kâr</th>
+        <th class="num" title="Quick Forge indirimiyle forge süresi; 3 plate yolunda iki forge arka arkaya.">Forge süresi</th>
+        <th class="num" title="Son 7 günde seçili satış yönteminin Bazaar hacmi.">Hacim (7g)</th>
+      </tr></thead>
+      <tbody>${tr}</tbody>
+    </table></div>
+    <p class="muted small">${cheaper ? `Skeleton Key için ${cheaper === viaPlates ? '3 plate alıp Perfect Plate\'i kendin forgelamak' : 'hazır Perfect Plate almak'} ${coins(diff)} daha ucuz. ` : ''}`
+    + `${S.metalOwnPlates ? 'Tungsten ve Umber Plate senin, maliyetleri satsan alacağın net fiyatla sayıldı. ' : ''}</p>`;
 }
 
 // ---------- profile ----------
