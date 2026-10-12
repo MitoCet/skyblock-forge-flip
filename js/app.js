@@ -1011,7 +1011,7 @@ function perfectSection() {
       </tr></thead>
       <tbody>${tr}</tbody>
     </table></div>
-    <p class="muted small">${cheaper ? `Skeleton Key için ${cheaper === viaPlates ? '3 plate alıp Perfect Plate\'i kendin forgelamak' : 'hazır Perfect Plate almak'} ${coins(diff)} daha ucuz. ` : ''}`
+    <p class="muted small">${cheaper ? `Skeleton Key için ${cheaper === viaPlates ? '3 plate ile Perfect Plate\'i kendin forgelamak' : 'hazır Perfect Plate almak'} ${coins(diff)} daha ucuz. ` : ''}`
     + `${S.metalOwnPlates ? 'Tungsten ve Umber Plate senin, maliyetleri satsan alacağın net fiyatla sayıldı. ' : ''}</p>`;
 }
 
