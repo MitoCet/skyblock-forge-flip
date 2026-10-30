@@ -438,8 +438,8 @@ async function needMarket(tbody, cols) {
   }
 }
 
-// ---------- live prices (NPC, craft and metal tabs) ----------
-// "Güncel fiyatları çek" reads Hypixel directly and only replaces `market` in memory:
+// ---------- live prices (forge, NPC, craft and metal tabs) ----------
+// "Güncel fiyatları çek" reads Hypixel directly and only replaces `market` and `latest` in memory:
 // nothing is written to the data branch, history or charts.
 const roundP = (v) => (v == null ? null : Math.round(v * 10) / 10);
 let liveAt = null, liveBusy = false;
@@ -506,10 +506,30 @@ async function fetchLive(withAh, status) {
     if (ask == null && bid == null) continue;
     bz[id] = [ask, bid, q.buyMovingWeek ?? 0, q.sellMovingWeek ?? 0];
   }
+  // Forge items and their inputs, in the latest.json shape (same as scripts/collect.mjs).
+  const tracked = new Set();
+  for (const r of recipes) {
+    tracked.add(r.id);
+    for (const i of r.inputs) if (i.id !== COIN) tracked.add(i.id);
+  }
+  const bazaar = {};
+  for (const id of tracked) {
+    const p = res.products?.[id];
+    if (!p) continue;
+    const q = p.quick_status || {};
+    bazaar[id] = {
+      ask: roundP(p.buy_summary?.[0]?.pricePerUnit ?? q.buyPrice),
+      bid: roundP(p.sell_summary?.[0]?.pricePerUnit ?? q.sellPrice),
+      buyWeek: q.buyMovingWeek ?? 0,
+      sellWeek: q.sellMovingWeek ?? 0,
+      asks: (p.buy_summary || []).slice(0, 15).map((o) => [roundP(o.pricePerUnit), o.amount]),
+    };
+  }
+  let forgeAh = latest?.ah || {};
   let ah = market.ah;
   if (withAh) {
     if (!window.pako) await loadScript('https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js');
-    ah = {};
+    ah = {}; forgeAh = {};
     const first = await getJson(`${HYPIXEL}/auctions?page=0`);
     const total = first.totalPages || 1;
     const pages = [first];
@@ -532,11 +552,18 @@ async function fetchLive(withAh, status) {
         const cur = ah[info.id] || (ah[info.id] = [unit, 0]);
         cur[0] = Math.min(cur[0], unit);
         cur[1]++;
+        if (!tracked.has(info.id) || bazaar[info.id]) continue;
+        const f = forgeAh[info.id] || (forgeAh[info.id] = { lbin: unit, n: 0 });
+        f.lbin = Math.min(f.lbin, unit);
+        f.n++;
       }
     }
     for (const v of Object.values(ah)) v[0] = roundP(v[0]);
+    for (const v of Object.values(forgeAh)) v.lbin = roundP(v.lbin);
   }
-  market = { ...market, ts: Math.floor((res.lastUpdated || Date.now()) / 1000), bz, ah, live: true, liveAh: withAh || market.liveAh };
+  const ts = Math.floor((res.lastUpdated || Date.now()) / 1000);
+  market = { ...market, ts, bz, ah, live: true, liveAh: withAh || market.liveAh };
+  latest = { ...latest, ts, bazaar, ah: forgeAh };
   liveAt = new Date();
 }
 
