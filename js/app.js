@@ -79,6 +79,10 @@ function history(id) {
 }
 const nameOf = (id) => names[id] || id;
 
+// Crystals (e.g. Ruby Crystal for Perfect gems) can't be traded, so with no
+// market price they count as free instead of blocking the profit.
+const isFreeCrystal = (id) => /_CRYSTAL$/.test(id);
+
 // Price to buy `qty` of an input: a buy order just above the best one, or an
 // instant buy that walks the Bazaar sell orders.
 function buyCost(id, qty) {
@@ -101,6 +105,7 @@ function buyCost(id, qty) {
   }
   const a = latest.ah[id];
   if (a) return { total: a.lbin * qty, unit: a.lbin, src: 'ah' };
+  if (isFreeCrystal(id)) return { total: 0, unit: 0, src: 'free' };
   return { total: null, unit: null, src: 'missing' };
 }
 
@@ -313,7 +318,7 @@ async function openDetail(id) {
   $('#detailInputs').innerHTML = `<thead><tr><th>Malzeme</th><th class="num">Adet</th><th class="num">Birim fiyat</th><th class="num">Toplam</th><th>Kaynak</th><th>Elle fiyat</th></tr></thead><tbody>
     ${e.inputs.map((i) => `<tr><td>${esc(nameOf(i.id))}</td><td class="num">${i.count.toLocaleString('tr-TR')}</td>
       <td class="num">${coins(i.unit)}</td><td class="num">${coins(i.total)}</td>
-      <td><span class="tag">${{ coin: 'coin', bazaar: 'Bazaar anında alım', 'bazaar-order': 'Bazaar buy order', ah: 'AH lowest BIN', manual: 'elle', missing: 'fiyat yok' }[i.src]}</span></td>
+      <td><span class="tag">${{ coin: 'coin', bazaar: 'Bazaar anında alım', 'bazaar-order': 'Bazaar buy order', ah: 'AH lowest BIN', manual: 'elle', free: 'satılamaz, 0 sayıldı', missing: 'fiyat yok' }[i.src]}</span></td>
       <td>${i.id === COIN ? '' : overrideCell(i.id)}</td></tr>`).join('')}
     <tr><td><b>Çıktı:</b> ${esc(e.name)}</td><td class="num">${r.count}</td><td class="num">${coins(e.sale.unit)}</td><td class="num">${coins(e.sale.net)}</td>
       <td><span class="tag">${e.sale.src === 'manual' ? 'elle' : saleLabel(e)}</span></td><td>${overrideCell(r.id)}</td></tr>
@@ -702,6 +707,7 @@ function marketBuy(id) {
   }
   const a = market.ah[id];
   if (a) return { unit: a[0], src: 'ah' };
+  if (isFreeCrystal(id)) return { unit: 0, src: 'free' };
   return { unit: null, src: 'missing' };
 }
 
@@ -773,7 +779,7 @@ function craftRows() {
 }
 
 let craftOpen = null;
-const SRC_LABEL = { bazaar: 'Bazaar anında alım', 'bazaar-order': 'Bazaar buy order', ah: 'AH lowest BIN', manual: 'elle', craft: 'craftlanır', missing: 'fiyat yok', coin: 'coin' };
+const SRC_LABEL = { bazaar: 'Bazaar anında alım', 'bazaar-order': 'Bazaar buy order', ah: 'AH lowest BIN', manual: 'elle', craft: 'craftlanır', free: 'satılamaz, 0 sayıldı', missing: 'fiyat yok', coin: 'coin' };
 
 function craftDetail(e) {
   const c = e.craft;
