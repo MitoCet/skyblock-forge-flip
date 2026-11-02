@@ -128,3 +128,7 @@ td.best { outline: 1px solid var(--good); outline-offset: -3px; border-radius: 4
 .calc { margin-bottom: 12px; }
 .calc .controls { margin-bottom: 0; }
 .calc table td, .calc table th { position: static; }
+.gem-hold { white-space: nowrap; }
+.gem-hold select, .gem-hold input { padding: 4px 6px; }
+.gem-hold input { width: 90px; margin-left: 4px; }
+.nowrap { white-space: nowrap; }
