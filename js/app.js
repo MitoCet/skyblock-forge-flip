@@ -944,35 +944,33 @@ function renderSellCraftCalc(rows) {
 // Gemstone tiers ranked by what one rough gem is worth when sold at that tier.
 // Rough → Flawed → Fine → Flawless take 80 each (crafting table). Perfect (a forge) is left out.
 const GEM_TIERS = [['ROUGH', 'Rough', 1], ['FLAWED', 'Flawed', 80], ['FINE', 'Fine', 6400], ['FLAWLESS', 'Flawless', 512000]];
-// Selling what you hold of one gemstone. Gems only craft upward (80 of a tier make 1 of the next),
-// never down. `target` is 'best' (the plan that earns most) or a tier key: everything below it is
-// crafted up to it as far as full crafts allow; tiers at or above it are sold as they are.
-const GEM_STEP = 80;
+// Selling what you hold of one gemstone. Gems only craft upward, never down: 80 of a tier make one
+// of the next on the crafting table, and 5 Flawless (+ a Crystal, counted free) forge one Perfect.
+// `target` is a tier key: everything below it is crafted up to it as far as full crafts allow, and
+// tiers at or above it are sold as they are. 'best' picks Fine or Perfect, whichever earns more:
+// the other tiers trade too thinly for their prices to hold on a large sale.
+const PLAN_TIERS = [...GEM_TIERS, ['PERFECT', 'Perfect', 2560000]];
+const PLAN_STEP = [80, 80, 80, 5]; // from tier i to tier i + 1
+const TO_TIER = { FLAWED: "Flawed'a", FINE: "Fine'a", FLAWLESS: "Flawless'a", PERFECT: "Perfect'e" };
 let gemSackMsg = 'Gemstone Sack\'indeki Rough, Flawed, Fine ve Flawless adetlerini profilinden doldurur.';
-function gemPlan(t, target) {
+function gemPlanTo(t, target) {
   const h = S.gemHold[t] || {};
-  const held = GEM_TIERS.map(([k]) => Math.max(0, Math.floor(Number(h[k]) || 0)));
+  const held = PLAN_TIERS.map(([k]) => Math.max(0, Math.floor(Number(h[k]) || 0)));
   if (!held.some((x) => x > 0)) return null;
-  const v = GEM_TIERS.map(([k]) => bestSale(`${k}_${t}_GEM`).net);
-  const last = GEM_TIERS.length - 1;
-  let up;
-  if (target === 'best') {
-    // Worth of one gem of each tier if used in the best way from there on.
-    const w = [];
-    for (let i = last; i >= 0; i--) w[i] = Math.max(v[i] ?? 0, i < last ? w[i + 1] / GEM_STEP : 0);
-    up = GEM_TIERS.map((_, i) => i < last && w[i + 1] / GEM_STEP > (v[i] ?? 0));
-  } else if (target === 'asis') {
-    up = GEM_TIERS.map(() => false);
-  } else {
-    const T = GEM_TIERS.findIndex(([k]) => k === target);
-    up = GEM_TIERS.map((_, i) => i < T);
-  }
+  const v = PLAN_TIERS.map(([k]) => bestSale(`${k}_${t}_GEM`).net);
+  const last = PLAN_TIERS.length - 1;
+  const T = target === 'asis' ? 0 : PLAN_TIERS.findIndex(([k]) => k === target);
   const sell = [], made = [];
   let pool = held[0];
   for (let i = 0; i <= last; i++) {
-    if (up[i] && i < last) {
-      made[i + 1] = Math.floor(pool / GEM_STEP);
-      sell[i] = pool - made[i + 1] * GEM_STEP;
+    if (i < T) {
+      made[i + 1] = Math.floor(pool / PLAN_STEP[i]);
+      // Going for Perfect, craft only the Flawless that complete a Perfect; spare Fine stays Fine.
+      if (T === last && i === last - 2) {
+        const perfects = Math.floor((held[i + 1] + made[i + 1]) / PLAN_STEP[i + 1]);
+        made[i + 1] = Math.max(0, perfects * PLAN_STEP[i + 1] - held[i + 1]);
+      }
+      sell[i] = pool - made[i + 1] * PLAN_STEP[i];
       pool = held[i + 1] + made[i + 1];
     } else {
       sell[i] = pool;
@@ -981,12 +979,18 @@ function gemPlan(t, target) {
   }
   const missing = sell.some((n, i) => n > 0 && v[i] == null);
   const total = sell.reduce((a, n, i) => a + n * (v[i] ?? 0), 0);
-  return { held, sell, made, total, missing };
+  return { held, sell, made, total, missing, target };
+}
+function gemPlan(t, target) {
+  if (target !== 'best') return gemPlanTo(t, target);
+  const fine = gemPlanTo(t, 'FINE'), perfect = gemPlanTo(t, 'PERFECT');
+  if (!fine) return null;
+  return perfect.total > fine.total && !perfect.missing ? perfect : fine;
 }
 const fmtN = (n) => n.toLocaleString('tr-TR');
 function gemPlanText(p) {
-  const crafts = GEM_TIERS.map(([, label], i) => (p.made[i] ? `${fmtN(p.made[i])} ${label}` : null)).filter(Boolean);
-  const sells = GEM_TIERS.map(([, label], i) => (p.sell[i] ? `${fmtN(p.sell[i])} ${label}` : null)).filter(Boolean);
+  const crafts = PLAN_TIERS.map(([, label], i) => (p.made[i] ? `${fmtN(p.made[i])} ${label}` : null)).filter(Boolean);
+  const sells = PLAN_TIERS.map(([, label], i) => (p.sell[i] ? `${fmtN(p.sell[i])} ${label}` : null)).filter(Boolean);
   return (crafts.length ? `Craftla: ${crafts.join(', ')}. ` : '') + `Sat: ${sells.join(', ') || '—'}`;
 }
 function gemHoldHtml(t) {
@@ -1010,7 +1014,7 @@ function gemHoldTotal(types) {
   const st = (k, v, cls = '') => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${coins(v)}</div></div>`;
   const diff = sum(chosen) - sum(ideal);
   return `<div class="stats">
-    ${st('Hepsini ideal şekilde satarsan', sum(ideal), 'pos')}
+    ${st('Hepsini en kârlı şekilde satarsan (Fine ya da Perfect)', sum(ideal), 'pos')}
     ${st('Seçtiğin tierlarla', sum(chosen), diff < 0 ? 'neg' : '')}
     ${st('Hiç craftlamadan satarsan', sum(asis))}
   </div>`;
@@ -1036,9 +1040,9 @@ function renderGemRank() {
     return `<tr><td>${esc(gemName(t))}</td>
       ${GEM_TIERS.map(([k]) => `<td class="gem-hold"><input type="number" min="0" step="1" placeholder="0" data-gem="${t}" data-k="${k}" value="${h[k] || ''}"></td>`).join('')}
       <td class="gem-hold"><select data-gem="${t}" data-k="target">
-        <option value="best"${target === 'best' ? ' selected' : ''}>En kârlı (ideal)</option>
+        <option value="best"${target === 'best' ? ' selected' : ''}>En kârlı (Fine ya da Perfect)</option>
         <option value="asis"${target === 'asis' ? ' selected' : ''}>Olduğu gibi sat</option>
-        ${GEM_TIERS.slice(1).map(([k, label]) => `<option value="${k}"${target === k ? ' selected' : ''}>${label}'a kadar craftla</option>`).join('')}
+        ${PLAN_TIERS.slice(1).map(([k]) => `<option value="${k}"${target === k ? ' selected' : ''}>${TO_TIER[k]} kadar craftla</option>`).join('')}
       </select></td>
       <td id="gemRes-${t}">${gemHoldHtml(t)}</td></tr>`;
   };
@@ -1049,7 +1053,7 @@ function renderGemRank() {
     </tbody></table></div>
     <h3>Elimdeki gemstone'lar</h3>
     <div class="live"><button id="gemSackBtn" class="primary" type="button">Sack'lerden çek</button><span id="gemSackStatus" class="muted small">${esc(gemSackMsg)}</span></div>
-    <p class="muted small">Her tierdan kaç tane olduğunu yaz. Gemler sadece yukarı craftlanır (80 tane = 1 üst tier), üst tier aşağı çevrilemez, o yüzden elindeki üst tierlar en az o tierda satılır. Tam craft'a yetmeyen artanlar bulundukları tierda satılır. "Ne yapmalı" sütunundan ideal yerine kendi seçtiğin tieri da hesaplatabilirsin.</p>
+    <p class="muted small">Her tierdan kaç tane olduğunu yaz. Gemler sadece yukarı craftlanır (80 tane = 1 üst tier), üst tier aşağı çevrilemez, o yüzden elindeki üst tierlar en az o tierda satılır. Tam craft'a yetmeyen artanlar bulundukları tierda satılır. "En kârlı" seçeneği gemleri Fine'a kadar ya da Perfect'e kadar craftlayıp satmaktan hangisi daha çok kazandırıyorsa onu kullanır, çünkü diğer tierların fiyatları büyük satışta tutmaz (sıralamada yine görünürler). "Ne yapmalı" sütunundan kendi seçtiğin tieri da hesaplatabilirsin. Perfect, 5 Flawless ve 1 Crystal ile forge'da 20 saatte yapılır; Crystal bedava sayıldı.</p>
     <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${GEM_TIERS.map(([, label]) => `<th>${label}</th>`).join('')}<th>Ne yapmalı</th><th>Sonuç (net)</th></tr></thead><tbody>
     ${types.map(holdRow).join('')}
     </tbody></table></div>
