@@ -22,6 +22,7 @@ const DEFAULTS = {
   npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
   scMarket: 'all', scSort: 'diff', scNpc: true, scOnlyCraft: false, scHideMissing: true,
+  scGemOnly: false, scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', perfectOnly: false,
   metalTungsten: 640, metalUmber: 640, metalUnit: 'ench', metalOwnPlates: false,
 };
 let S = load();
@@ -83,6 +84,8 @@ const nameOf = (id) => names[id] || id;
 // Crystals (e.g. Ruby Crystal for Perfect gems) can't be traded, so with no
 // market price they count as free instead of blocking the profit.
 const isFreeCrystal = (id) => /_CRYSTAL$/.test(id);
+// Gemstones: ROUGH_RUBY_GEM … PERFECT_RUBY_GEM. `tier` limits to one quality.
+const isGem = (id, tier = '(ROUGH|FLAWED|FINE|FLAWLESS|PERFECT)') => new RegExp(`^${tier}_[A-Z]+_GEM$`).test(id);
 
 // Price to buy `qty` of an input: a buy order just above the best one, or an
 // instant buy that walks the Bazaar sell orders.
@@ -169,6 +172,7 @@ function rows() {
   let list = recipes.map(evaluate);
   if (S.market !== 'all') list = list.filter((e) => e.sale.market === S.market);
   if (S.hideMissing) list = list.filter((e) => !e.missing);
+  if (S.perfectOnly) list = list.filter((e) => isGem(e.id, 'PERFECT'));
   if (S.sort === 'hour' && !S.showQuick) list = list.filter((e) => e.time >= QUICK_SECONDS);
   if (S.hideLoss) list = list.filter((e) => e.profit == null || e.profit > 0);
   if (q) list = list.filter((e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
@@ -900,6 +904,65 @@ function sellCraftDetail(e) {
   </td></tr>`;
 }
 
+// Calculator: one item and an amount, either of crafted items or of the main material you have.
+function renderSellCraftCalc(rows) {
+  const dl = $('#scCalcList');
+  if (!dl.childElementCount) dl.innerHTML = rows.map((e) => `<option value="${esc(e.name)}"></option>`).join('');
+  const body = $('#scCalcBody');
+  const e = rows.find((x) => x.id === S.scCalcId);
+  if (!e) { body.className = 'muted small'; body.innerHTML = S.scCalcId ? 'Bu item bulunamadı.' : 'Bir item seç ve adet yaz; malzemeleri satmakla craftlayıp satmak arasındaki toplam farkı burada görürsün.'; return; }
+  if (document.activeElement !== $('#scCalcItem')) $('#scCalcItem').value = e.name;
+  const c = e.recipe;
+  const qty = Math.max(1, Math.floor(Number(S.scCalcQty) || 1));
+  // Main material: the ingredient used most per craft.
+  const main = c.inputs.reduce((a, b) => (b.count > a.count ? b : a));
+  const crafts = S.scCalcUnit === 'in' ? Math.floor(qty / main.count) : Math.ceil(qty / c.count);
+  const made = crafts * c.count;
+  const leftover = S.scCalcUnit === 'in' ? qty - crafts * main.count : 0;
+  const mats = e.inputs.map((i) => ({ ...i, n: i.count * crafts }));
+  const direct = mats.some((i) => i.unit == null) ? null : mats.reduce((t, i) => t + i.unit * i.n, 0);
+  const craft = e.out.net == null ? null : e.out.net * made;
+  const diff = direct == null || craft == null ? null : craft - direct;
+  const cls = diff == null ? '' : diff > 0 ? 'pos' : 'neg';
+  const stat = (k, v, kls = '') => `<div class="stat"><div class="k">${k}</div><div class="v ${kls}">${v}</div></div>`;
+  body.className = '';
+  body.innerHTML = crafts === 0
+    ? `<p class="muted small">1 craft için ${main.count.toLocaleString('tr-TR')} ${esc(anyName(main.id))} gerekiyor; yazdığın adet yetmiyor.</p>`
+    : `<div class="stats">
+      ${stat(`Malzemeleri sat (${crafts.toLocaleString('tr-TR')} craftlık)`, coins(direct))}
+      ${stat(`${made.toLocaleString('tr-TR')} ${esc(e.name)} sat`, coins(craft))}
+      ${stat(diff == null ? 'Fark' : diff > 0 ? 'Craftlarsan fazladan kazanırsın' : 'Craftlarsan kaybedersin', coins(diff == null ? null : Math.abs(diff)), cls)}
+    </div>
+    <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Malzeme</th><th class="num">Toplam adet</th><th class="num">Birim (net)</th><th class="num">Toplam (net)</th><th>Nereye</th></tr></thead><tbody>
+      ${mats.map((i) => `<tr><td>${esc(anyName(i.id))}</td><td class="num">${i.n.toLocaleString('tr-TR')}</td><td class="num">${coins(i.unit)}</td><td class="num">${coins(i.unit == null ? null : i.unit * i.n)}</td><td><span class="tag">${i.unit == null ? 'fiyat yok' : WHERE_LABEL[i.where]}</span></td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="muted small">${S.scCalcUnit === 'out' && made !== qty ? `Bir craft ${c.count} adet verdiği için ${made.toLocaleString('tr-TR')} adede yuvarlandı. ` : ''}${leftover > 0 ? `${leftover.toLocaleString('tr-TR')} ${esc(anyName(main.id))} artıyor; iki durumda da satılacağı için farkı değiştirmez. ` : ''}Bazaar fiyatı en iyi tekliften hesaplanır; çok büyük miktarda satışta fiyat düşebilir.</p>`;
+}
+
+// Gemstone tiers ranked by what one rough gem is worth when sold at that tier.
+// Rough → Flawed → Fine → Flawless take 80 each (crafting table), Perfect takes 5 Flawless (forge).
+const GEM_TIERS = [['ROUGH', 'Rough', 1], ['FLAWED', 'Flawed', 80], ['FINE', 'Fine', 6400], ['FLAWLESS', 'Flawless', 512000], ['PERFECT', 'Perfect', 2560000]];
+function renderGemRank() {
+  const box = $('#gemRank');
+  box.hidden = !S.scGemOnly;
+  if (!S.scGemOnly) return;
+  const types = Object.keys(market.bz).map((id) => id.match(/^ROUGH_([A-Z]+)_GEM$/)?.[1]).filter(Boolean).sort();
+  const rows = types.map((t) => {
+    const tiers = GEM_TIERS.map(([k, label, eq]) => {
+      const s = bestSale(`${k}_${t}_GEM`);
+      return { label, per: s.net == null ? null : (s.net / eq) * 1000, where: s.where };
+    }).filter((x) => x.per != null).sort((a, b) => b.per - a.per);
+    return { t, name: anyName(`ROUGH_${t}_GEM`).replace(/^Rough /, '').replace(/ Gemstone$/, ''), tiers };
+  });
+  const n = Math.max(0, ...rows.map((r) => r.tiers.length));
+  box.innerHTML = `<h3>Gemstone tier sıralaması</h3>
+    <p class="muted small">Her gemstone için hangi tierda satmanın en kârlı olduğu. Değerler 1000 ham (Rough) gem başına net coin: Bazaar vergisi düşüldü${S.scNpc ? ', NPC daha iyiyse o sayıldı' : ''}.</p>
+    <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${[...Array(n).keys()].map((i) => `<th>${i + 1}.</th>`).join('')}</tr></thead><tbody>
+    ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td${i === 0 ? ' class="best"' : ''}><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` (−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
+    </tbody></table></div>
+    <p class="muted small">Perfect, 5 Flawless ve 1 Crystal ile forge'da 20 saatte yapılır; Crystal satılamadığı için bedava sayıldı.</p>`;
+}
+
 async function renderSellCraft() {
   const tbody = $('#scTable tbody');
   if (!await needMarket(tbody, 7)) return;
@@ -909,8 +972,11 @@ async function renderSellCraft() {
   }
   const q = $('#scSearch').value.trim().toLowerCase();
   let list = sellCraftRows();
+  renderSellCraftCalc(list);
+  renderGemRank();
   if (S.scMarket !== 'all') list = list.filter((e) => e.market === S.scMarket);
   if (S.scHideMissing) list = list.filter((e) => !e.missing);
+  if (S.scGemOnly) list = list.filter((e) => isGem(e.id));
   if (S.scOnlyCraft) list = list.filter((e) => e.diff > 0);
   if (q) list = list.filter((e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
   const key = S.scSort;
@@ -1276,10 +1342,23 @@ function wire() {
     renderCraft();
   });
   $('#scSearch').addEventListener('input', renderSellCraft);
+  $('#scCalcQty').value = S.scCalcQty;
+  $('#scCalcQty').addEventListener('input', (ev) => { S.scCalcQty = Number(ev.target.value) || 1; save(); renderSellCraft(); });
+  $('#scCalcItem').addEventListener('change', async (ev) => {
+    const v = ev.target.value.trim().toLowerCase();
+    await loadExtra();
+    const id = [...craftsBy.keys()].find((k) => anyName(k).toLowerCase() === v || k.toLowerCase() === v)
+      || [...craftsBy.keys()].find((k) => anyName(k).toLowerCase().includes(v));
+    S.scCalcId = v ? id || v : ''; save();
+    if (id) ev.target.value = anyName(id);
+    renderSellCraft();
+  });
   $('#scTable tbody').addEventListener('click', (ev) => {
     const tr = ev.target.closest('tr[data-id]');
     if (!tr) return;
     scOpen = scOpen === tr.dataset.id ? null : tr.dataset.id;
+    S.scCalcId = tr.dataset.id; save();
+    $('#scCalcItem').value = anyName(tr.dataset.id);
     renderSellCraft();
   });
   $('#bestTable tbody').addEventListener('click', (ev) => {
