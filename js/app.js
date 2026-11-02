@@ -26,6 +26,8 @@ const DEFAULTS = {
   metalTungsten: 640, metalUmber: 640, metalUnit: 'ench', metalOwnPlates: false,
 };
 let S = load();
+// gemHold used to hold one { tier, qty } per gemstone; now it holds an amount per tier.
+for (const [t, h] of Object.entries(S.gemHold || {})) if (h && h.tier) S.gemHold[t] = { [h.tier]: h.qty || 0 };
 function load() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('forgeflip') || '{}') }; }
   catch { return { ...DEFAULTS }; }
@@ -942,39 +944,75 @@ function renderSellCraftCalc(rows) {
 // Gemstone tiers ranked by what one rough gem is worth when sold at that tier.
 // Rough → Flawed → Fine → Flawless take 80 each (crafting table). Perfect (a forge) is left out.
 const GEM_TIERS = [['ROUGH', 'Rough', 1], ['FLAWED', 'Flawed', 80], ['FINE', 'Fine', 6400], ['FLAWLESS', 'Flawless', 512000]];
-// What a holding of one tier is worth at each tier you can craft it up to; leftovers that don't make
-// a full craft are sold as they are.
-function gemHoldResult(t) {
-  const h = S.gemHold[t];
-  const qty = Math.max(0, Math.floor(Number(h?.qty) || 0));
-  if (!qty) return null;
-  const from = GEM_TIERS.findIndex(([k]) => k === h.tier);
-  const [fk, flabel, feq] = GEM_TIERS[from];
-  const fromNet = bestSale(`${fk}_${t}_GEM`).net;
-  const opts = GEM_TIERS.slice(from).map(([k, label, eq]) => {
-    const net = bestSale(`${k}_${t}_GEM`).net;
-    const ratio = eq / feq;
-    const made = Math.floor(qty / ratio);
-    const left = qty - made * ratio;
-    const total = net == null || (left > 0 && fromNet == null) ? null : made * net + left * (fromNet ?? 0);
-    return { label, made, left, total };
-  }).filter((o) => o.total != null && (o.made > 0 || o.label === flabel));
-  if (!opts.length) return { qty, flabel, best: null };
-  const asIs = opts[0];
-  const best = opts.reduce((a, b) => (b.total > a.total ? b : a));
-  return { qty, flabel, best, asIs };
+// Selling what you hold of one gemstone. Gems only craft upward (80 of a tier make 1 of the next),
+// never down. `target` is 'best' (the plan that earns most) or a tier key: everything below it is
+// crafted up to it as far as full crafts allow; tiers at or above it are sold as they are.
+const GEM_STEP = 80;
+function gemPlan(t, target) {
+  const h = S.gemHold[t] || {};
+  const held = GEM_TIERS.map(([k]) => Math.max(0, Math.floor(Number(h[k]) || 0)));
+  if (!held.some((x) => x > 0)) return null;
+  const v = GEM_TIERS.map(([k]) => bestSale(`${k}_${t}_GEM`).net);
+  const last = GEM_TIERS.length - 1;
+  let up;
+  if (target === 'best') {
+    // Worth of one gem of each tier if used in the best way from there on.
+    const w = [];
+    for (let i = last; i >= 0; i--) w[i] = Math.max(v[i] ?? 0, i < last ? w[i + 1] / GEM_STEP : 0);
+    up = GEM_TIERS.map((_, i) => i < last && w[i + 1] / GEM_STEP > (v[i] ?? 0));
+  } else if (target === 'asis') {
+    up = GEM_TIERS.map(() => false);
+  } else {
+    const T = GEM_TIERS.findIndex(([k]) => k === target);
+    up = GEM_TIERS.map((_, i) => i < T);
+  }
+  const sell = [], made = [];
+  let pool = held[0];
+  for (let i = 0; i <= last; i++) {
+    if (up[i] && i < last) {
+      made[i + 1] = Math.floor(pool / GEM_STEP);
+      sell[i] = pool - made[i + 1] * GEM_STEP;
+      pool = held[i + 1] + made[i + 1];
+    } else {
+      sell[i] = pool;
+      if (i < last) pool = held[i + 1];
+    }
+  }
+  const missing = sell.some((n, i) => n > 0 && v[i] == null);
+  const total = sell.reduce((a, n, i) => a + n * (v[i] ?? 0), 0);
+  return { held, sell, made, total, missing };
+}
+const fmtN = (n) => n.toLocaleString('tr-TR');
+function gemPlanText(p) {
+  const crafts = GEM_TIERS.map(([, label], i) => (p.made[i] ? `${fmtN(p.made[i])} ${label}` : null)).filter(Boolean);
+  const sells = GEM_TIERS.map(([, label], i) => (p.sell[i] ? `${fmtN(p.sell[i])} ${label}` : null)).filter(Boolean);
+  return (crafts.length ? `Craftla: ${crafts.join(', ')}. ` : '') + `Sat: ${sells.join(', ') || '—'}`;
 }
 function gemHoldHtml(t) {
-  const r = gemHoldResult(t);
-  if (!r) return '<span class="muted small">Adet yaz</span>';
-  if (!r.best) return '<span class="muted small">fiyat yok</span>';
-  const b = r.best, gain = b.total - r.asIs.total;
-  const what = b === r.asIs ? `${r.flabel} olarak sat` : `${b.made.toLocaleString('tr-TR')} ${b.label} craftla, sat${b.left ? ` (+${b.left.toLocaleString('tr-TR')} ${r.flabel} olduğu gibi)` : ''}`;
-  return `<b>${coins(b.total)}</b> <span class="small">${what}</span>${gain > 0 ? ` <span class="pos small">olduğu gibi satmaktan +${coins(gain)}</span>` : ''}`;
+  const target = S.gemHold[t]?.target || 'best';
+  const p = gemPlan(t, target);
+  if (!p) return '<span class="muted small">Adet yaz</span>';
+  const best = gemPlan(t, 'best'), asis = gemPlan(t, 'asis');
+  const vsBest = target !== 'best' ? p.total - best.total : 0;
+  const vsAsis = p.total - asis.total;
+  return `<b>${coins(p.total)}</b>${p.missing ? ' <span class="warn">bazı tierların fiyatı yok, 0 sayıldı</span>' : ''}
+    <div class="small">${gemPlanText(p)}</div>
+    <div class="small">${vsAsis > 0 ? `<span class="pos">Olduğu gibi satmaktan +${coins(vsAsis)}</span>` : vsAsis < 0 ? `<span class="neg">Olduğu gibi satmaktan ${coins(vsAsis)}</span>` : ''}
+    ${vsBest < 0 ? ` <span class="neg">İdeale göre ${coins(vsBest)}</span>` : ''}</div>`;
 }
 function gemHoldTotal(types) {
-  const rs = types.map(gemHoldResult).filter((r) => r?.best);
-  return rs.length ? `Toplam (en iyi yolla): <b>${coins(rs.reduce((a, r) => a + r.best.total, 0))}</b>` : '';
+  const ideal = types.map((t) => gemPlan(t, 'best')).filter(Boolean);
+  if (!ideal.length) return '';
+  const chosen = types.map((t) => gemPlan(t, S.gemHold[t]?.target || 'best')).filter(Boolean);
+  const asis = types.map((t) => gemPlan(t, 'asis')).filter(Boolean);
+  const sum = (l) => l.reduce((a, p) => a + p.total, 0);
+  const st = (k, v, cls = '') => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${coins(v)}</div></div>`;
+  const diff = sum(chosen) - sum(ideal);
+  return `<div class="stats">
+    ${st('Hepsini ideal şekilde satarsan', sum(ideal), 'pos')}
+    ${st('Seçtiğin tierlarla', sum(chosen), diff < 0 ? 'neg' : '')}
+    ${st('Hiç craftlamadan satarsan', sum(asis))}
+  </div>`;
 }
 
 function renderGemRank() {
@@ -982,30 +1020,42 @@ function renderGemRank() {
   box.hidden = !S.scGemOnly;
   if (!S.scGemOnly) return;
   const types = Object.keys(market.bz).map((id) => id.match(/^ROUGH_([A-Z]+)_GEM$/)?.[1]).filter(Boolean).sort();
+  const gemName = (t) => anyName(`ROUGH_${t}_GEM`).replace(/^Rough /, '').replace(/ Gemstone$/, '');
   const rows = types.map((t) => {
     const tiers = GEM_TIERS.map(([k, label, eq]) => {
       const s = bestSale(`${k}_${t}_GEM`);
       return { label, per: s.net == null ? null : (s.net / eq) * 1000, where: s.where };
     }).filter((x) => x.per != null).sort((a, b) => b.per - a.per);
-    return { t, name: anyName(`ROUGH_${t}_GEM`).replace(/^Rough /, '').replace(/ Gemstone$/, ''), tiers };
+    return { t, name: gemName(t), tiers };
   });
   const n = Math.max(0, ...rows.map((r) => r.tiers.length));
-  const holdCell = (t) => {
+  const holdRow = (t) => {
     const h = S.gemHold[t] || {};
-    return `<td class="gem-hold"><select data-gem="${t}" data-k="tier">${GEM_TIERS.map(([k, label]) => `<option value="${k}"${(h.tier || 'FLAWED') === k ? ' selected' : ''}>${label}</option>`).join('')}</select>
-      <input type="number" min="0" step="1" placeholder="adet" data-gem="${t}" data-k="qty" value="${h.qty || ''}"></td>
-      <td id="gemRes-${t}">${gemHoldHtml(t)}</td>`;
+    const target = h.target || 'best';
+    return `<tr><td>${esc(gemName(t))}</td>
+      ${GEM_TIERS.map(([k]) => `<td class="gem-hold"><input type="number" min="0" step="1" placeholder="0" data-gem="${t}" data-k="${k}" value="${h[k] || ''}"></td>`).join('')}
+      <td class="gem-hold"><select data-gem="${t}" data-k="target">
+        <option value="best"${target === 'best' ? ' selected' : ''}>En kârlı (ideal)</option>
+        <option value="asis"${target === 'asis' ? ' selected' : ''}>Olduğu gibi sat</option>
+        ${GEM_TIERS.slice(1).map(([k, label]) => `<option value="${k}"${target === k ? ' selected' : ''}>${label}'a kadar craftla</option>`).join('')}
+      </select></td>
+      <td id="gemRes-${t}">${gemHoldHtml(t)}</td></tr>`;
   };
   box.innerHTML = `<h3>Gemstone tier sıralaması</h3>
-    <p class="muted small">Her gemstone için hangi tierda satmanın en kârlı olduğu. Değerler 1000 ham (Rough) gem başına net coin: Bazaar vergisi düşüldü${S.scNpc ? ', NPC daha iyiyse o sayıldı' : ''}. Sağdaki kutulara elindeki tieri ve adedi yazarsan, onu olduğu gibi ya da üst tiera craftlayıp satmanın en iyisini hesaplar.</p>
-    <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${[...Array(n).keys()].map((i) => `<th>${i + 1}.</th>`).join('')}<th>Elimdeki</th><th>Ne yapmalı</th></tr></thead><tbody>
-    ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td${i === 0 ? ' class="best"' : ''}><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` <span class="nowrap">(−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})</span>` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}${holdCell(r.t)}</tr>`).join('')}
+    <p class="muted small">Her gemstone için hangi tierda satmanın en kârlı olduğu. Değerler 1000 ham (Rough) gem başına net coin: Bazaar vergisi düşüldü${S.scNpc ? ', NPC daha iyiyse o sayıldı' : ''}.</p>
+    <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${[...Array(n).keys()].map((i) => `<th>${i + 1}.</th>`).join('')}</tr></thead><tbody>
+    ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td${i === 0 ? ' class="best"' : ''}><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` <span class="nowrap">(−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})</span>` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
     </tbody></table></div>
-    <p class="small" id="gemHoldTotal">${gemHoldTotal(types)}</p>`;
+    <h3>Elimdeki gemstone'lar</h3>
+    <p class="muted small">Her tierdan kaç tane olduğunu yaz. Gemler sadece yukarı craftlanır (80 tane = 1 üst tier), üst tier aşağı çevrilemez, o yüzden elindeki üst tierlar en az o tierda satılır. Tam craft'a yetmeyen artanlar bulundukları tierda satılır. "Ne yapmalı" sütunundan ideal yerine kendi seçtiğin tieri da hesaplatabilirsin.</p>
+    <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${GEM_TIERS.map(([, label]) => `<th>${label}</th>`).join('')}<th>Ne yapmalı</th><th>Sonuç (net)</th></tr></thead><tbody>
+    ${types.map(holdRow).join('')}
+    </tbody></table></div>
+    <div id="gemHoldTotal">${gemHoldTotal(types)}</div>`;
   box.oninput = (ev) => {
     const { gem, k } = ev.target.dataset;
     if (!gem) return;
-    S.gemHold[gem] = { tier: 'FLAWED', ...S.gemHold[gem], [k]: k === 'qty' ? Number(ev.target.value) || 0 : ev.target.value };
+    S.gemHold[gem] = { ...S.gemHold[gem], [k]: k === 'target' ? ev.target.value : Number(ev.target.value) || 0 };
     save();
     $(`#gemRes-${gem}`).innerHTML = gemHoldHtml(gem);
     $('#gemHoldTotal').innerHTML = gemHoldTotal(types);
