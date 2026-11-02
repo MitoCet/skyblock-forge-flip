@@ -22,6 +22,7 @@
     <button class="tab" data-tab="compare">Karşılaştır <span id="compareCount" class="badge">0</span></button>
     <button class="tab" data-tab="npc">NPC vs Bazaar</button>
     <button class="tab" data-tab="craft">Craft mı al mı</button>
+    <button class="tab" data-tab="sellcraft">Craftla mı sat mı</button>
     <button class="tab" data-tab="metal">Dwarven Metal Mining</button>
     <button class="tab" data-tab="settings">Profil ve ayarlar</button>
   </nav>
@@ -251,6 +252,60 @@
         </table>
       </div>
       <p class="muted small" id="craftNote">Malzemeleri görmek için satıra tıkla. Tarifler NotEnoughUpdates verisinden, fiyatı olmayan malzemeler (NPC'den alınan vanilla itemler gibi) eksik sayılır.</p>
+    </section>
+
+    <section id="tab-sellcraft" class="panel">
+      <div class="live">
+        <button class="primary live-btn" type="button">Güncel fiyatları çek</button>
+        <label class="check" title="Auction House'un tüm ilanlarını indirir; birkaç saniye ile bir dakika arası sürebilir."><input type="checkbox" data-setting="liveAh"> AH'ı da yenile (yavaş)</label>
+        <span class="live-status muted small"></span>
+      </div>
+      <p class="muted small">Elindeki malzemeleri olduğu gibi satmak mı, craftlayıp çıkan itemi satmak mı daha çok kazandırır? İki taraftan da Bazaar vergisi ve AH ücretleri düşülür.</p>
+      <div class="controls">
+        <input id="scSearch" class="search" type="search" placeholder="Item ara…">
+        <label>Pazar (craftlanan item)
+          <select data-setting="scMarket">
+            <option value="all">Hepsi</option>
+            <option value="bazaar">Sadece Bazaar</option>
+            <option value="ah">Sadece Auction House</option>
+          </select>
+        </label>
+        <label>Bazaar satışı
+          <select data-setting="sellMode">
+            <option value="offer">Sell offer</option>
+            <option value="instant">Anında satış</option>
+          </select>
+        </label>
+        <label>Sırala
+          <select data-setting="scSort">
+            <option value="diff">Craftlamanın farkı</option>
+            <option value="diffPct">Fark oranı (%)</option>
+            <option value="craftNet">Craftlayıp satış (net)</option>
+            <option value="directNet">Malzemeleri satış (net)</option>
+            <option value="demand">Talep</option>
+          </select>
+        </label>
+        <label class="check" title="NPC'ye satışta vergi yoktur. İşaretliyse her item için Bazaar/AH net fiyatı ile NPC fiyatından hangisi yüksekse o kullanılır."><input data-setting="scNpc" type="checkbox"> NPC'ye satmayı da hesaba kat</label>
+        <label class="check"><input data-setting="scOnlyCraft" type="checkbox"> Sadece craftlamanın daha kârlı olduğu itemler</label>
+        <label class="check"><input data-setting="scHideMissing" type="checkbox"> Fiyatı eksik olanları gizle</label>
+      </div>
+      <div class="table-wrap">
+        <table id="scTable">
+          <thead>
+            <tr>
+              <th>Craftlanan item</th>
+              <th>Pazar</th>
+              <th class="num" title="1 adet item için gereken malzemeleri craftlamadan satınca eline geçen (vergi ve ücretler düşülmüş).">Malzemeleri sat (net)</th>
+              <th class="num" title="Craftlanan 1 adet itemi satınca eline geçen (vergi ve ücretler düşülmüş).">Craftla + sat (net)</th>
+              <th>Daha kârlı</th>
+              <th class="num" title="Craftla + sat − malzemeleri sat. Pozitifse craftlamak daha kârlı.">Fark / adet</th>
+              <th class="num" title="Craftlanan item için. Bazaar: son 7 günde satış yönteminin hacmi. AH: şu anki BIN ilan sayısı.">Talep</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="scNote"></p>
     </section>
 
     <section id="tab-metal" class="panel">

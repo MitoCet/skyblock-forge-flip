@@ -21,6 +21,7 @@ const DEFAULTS = {
   liveAh: false,
   npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
+  scMarket: 'all', scSort: 'diff', scNpc: true, scOnlyCraft: false, scHideMissing: true,
   metalTungsten: 640, metalUmber: 640, metalUnit: 'ench', metalOwnPlates: false,
 };
 let S = load();
@@ -410,7 +411,7 @@ async function drawCompare() {
     + 'Kâr, her kayıt anındaki Bazaar/AH fiyatlarıyla yeniden hesaplanır.';
 }
 
-// ---------- market-wide data (NPC and craft tabs) ----------
+// ---------- market-wide data (NPC, craft and craft-or-sell tabs) ----------
 // market.json: every Bazaar product [ask, bid, buyWeek, sellWeek] and every AH item [lowestBin, listings].
 let market = null, npcData = null, craftData = null;
 const craftsBy = new Map();
@@ -839,6 +840,103 @@ async function renderCraft() {
     + 'Fiyatı olmayan malzemeler (NPC\'den alınan vanilla itemler gibi) eksik sayılır.';
 }
 
+// ---------- craft and sell vs sell the materials ----------
+// For materials you already have: sell them as they are, or craft them and sell the result.
+// Both sides are net: Bazaar tax and AH fees come off, NPC sales are untaxed.
+function bestSale(id) {
+  const m = marketSell(id);
+  const npc = S.scNpc && S.overrides[id] == null ? npcData?.npc[id] ?? null : null;
+  if (npc != null && (m.net == null || npc > m.net)) return { net: npc, where: 'npc', market: m.market, demand: m.demand };
+  return { net: m.net, where: m.market, market: m.market, demand: m.demand };
+}
+
+function sellCraftRow(c) {
+  const out = bestSale(c.id);
+  const inputs = c.inputs.map((i) => {
+    const s = bestSale(i.id);
+    return { ...i, unit: s.net, where: s.where, total: s.net == null ? null : s.net * i.count };
+  });
+  const missing = out.net == null || inputs.some((i) => i.total == null);
+  const directNet = inputs.some((i) => i.total == null) ? null : inputs.reduce((t, i) => t + i.total, 0) / c.count;
+  const diff = missing ? null : out.net - directNet;
+  return {
+    id: c.id, recipe: c, inputs, out, directNet, craftNet: out.net, diff, missing,
+    diffPct: diff != null && directNet > 0 ? (diff / directNet) * 100 : null,
+  };
+}
+
+function sellCraftRows() {
+  const list = [];
+  for (const [id, cs] of craftsBy) {
+    const mk = market.bz[id] ? 'bazaar' : market.ah[id] ? 'ah' : 'unknown';
+    if (mk === 'unknown' && S.overrides[id] == null && !(S.scNpc && npcData?.npc[id] != null)) continue;
+    // With several recipes, show the one whose materials sell for the least: the best one to craft.
+    let best = null;
+    for (const c of cs) {
+      const r = sellCraftRow(c);
+      if (!best || (r.diff != null && (best.diff == null || r.diff > best.diff))) best = r;
+    }
+    list.push({ ...best, name: anyName(id), market: mk, alts: cs.length, demand: best.out.demand });
+  }
+  return list;
+}
+
+const WHERE_LABEL = { bazaar: 'Bazaar', ah: 'AH', npc: 'NPC', unknown: '—' };
+let scOpen = null;
+
+function sellCraftDetail(e) {
+  const c = e.recipe;
+  const tax = (w) => (w === 'bazaar' ? `%${S.bzTax} vergi düşüldü` : w === 'ah' ? 'AH ücreti düşüldü' : w === 'npc' ? 'vergisiz' : '');
+  return `<tr class="sub"><td colspan="7">
+    ${c.count > 1 ? `<p class="small muted">Bir craft ${c.count} adet verir; malzeme değeri adet başına bölündü.</p>` : ''}
+    ${e.alts > 1 ? `<p class="small muted">Bu itemin ${e.alts} tarifi var; craftlamanın en kârlı olduğu gösteriliyor.</p>` : ''}
+    <table><thead><tr><th>Malzeme (1 craft)</th><th class="num">Adet</th><th class="num">Birim (net)</th><th class="num">Toplam (net)</th><th>Nereye</th></tr></thead>
+    <tbody>${e.inputs.map((i) => `<tr><td>${esc(anyName(i.id))}</td><td class="num">${i.count.toLocaleString('tr-TR')}</td>
+      <td class="num">${coins(i.unit)}</td><td class="num">${coins(i.total)}</td>
+      <td>${i.unit == null ? '<span class="tag">fiyat yok</span>' : `<span class="tag">${WHERE_LABEL[i.where]}</span> <span class="muted small">${tax(i.where)}</span>`}</td></tr>`).join('')}
+      <tr><td><b>Çıktı:</b> ${esc(e.name)}</td><td class="num">${c.count}</td><td class="num">${coins(e.out.net)}</td><td class="num">${coins(e.out.net == null ? null : e.out.net * c.count)}</td>
+      <td>${e.out.net == null ? '<span class="tag">fiyat yok</span>' : `<span class="tag">${WHERE_LABEL[e.out.where]}</span> <span class="muted small">${tax(e.out.where)}</span>`}</td></tr>
+    </tbody></table>
+  </td></tr>`;
+}
+
+async function renderSellCraft() {
+  const tbody = $('#scTable tbody');
+  if (!await needMarket(tbody, 7)) return;
+  if (!craftData) {
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Craft tarifleri henüz oluşturulmadı. Fiyat toplayıcı bir sonraki çalışmasında ekleyecek.</td></tr>';
+    return;
+  }
+  const q = $('#scSearch').value.trim().toLowerCase();
+  let list = sellCraftRows();
+  if (S.scMarket !== 'all') list = list.filter((e) => e.market === S.scMarket);
+  if (S.scHideMissing) list = list.filter((e) => !e.missing);
+  if (S.scOnlyCraft) list = list.filter((e) => e.diff > 0);
+  if (q) list = list.filter((e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
+  const key = S.scSort;
+  list.sort((a, b) => (a[key] == null ? 1 : b[key] == null ? -1 : b[key] - a[key]));
+  const shown = list.slice(0, 500);
+  tbody.innerHTML = shown.map((e) => {
+    const better = e.diff == null ? '—' : e.diff > 0 ? '<span class="tag pos">Craftla, sat</span>' : '<span class="tag">Malzemeleri sat</span>';
+    const cls = e.diff == null ? '' : e.diff > 0 ? 'pos' : 'neg';
+    const where = e.out.where === 'npc' ? 'NPC' : e.market === 'ah' ? 'AH' : e.market === 'bazaar' ? 'Bazaar' : '?';
+    const demand = e.demand == null ? '—' : e.market === 'ah' ? `${e.demand} ilan` : `${coins(e.demand)}/hf`;
+    return `<tr data-id="${esc(e.id)}">
+      <td>${esc(e.name)}</td>
+      <td><span class="tag">${where}</span></td>
+      <td class="num">${coins(e.directNet)}</td>
+      <td class="num">${coins(e.craftNet)}</td>
+      <td>${better}</td>
+      <td class="num ${cls}">${coins(e.diff)}${e.diffPct != null && e.diff > 0 ? ` <span class="muted small">%${e.diffPct.toFixed(1)}</span>` : ''}</td>
+      <td class="num">${demand}</td>
+    </tr>${scOpen === e.id ? sellCraftDetail(e) : ''}`;
+  }).join('') || '<tr><td colspan="7" class="muted">Filtrelere uyan item yok.</td></tr>';
+  $('#scNote').textContent = `${list.length} item${list.length > shown.length ? `, ilk ${shown.length} tanesi gösteriliyor (aramayla daralt)` : ''}. Malzemeleri görmek için satıra tıkla. `
+    + `Bazaar satışından %${S.bzTax} vergi (ayarlardan değişir), AH satışından ilan ve claim ücreti düşüldü. `
+    + (S.scNpc ? 'NPC\'ye satmak daha iyiyse o kullanıldı (NPC\'de vergi yok). ' : '')
+    + 'Değerler 1 adet craftlanan item için.';
+}
+
 // ---------- Dwarven metal mining ----------
 // Mined Tungsten / Umber, compared by what the same amount of Enchanted metal
 // becomes: sold as is, forged into keys, or forged to Refined and then to Plates.
@@ -1140,6 +1238,7 @@ function refreshAll() {
   if ($('#tab-compare').classList.contains('active')) renderCompare();
   if ($('#tab-npc').classList.contains('active')) renderNpc();
   if ($('#tab-craft').classList.contains('active')) renderCraft();
+  if ($('#tab-sellcraft').classList.contains('active')) renderSellCraft();
   if ($('#tab-metal').classList.contains('active')) renderMetal();
 }
 
@@ -1150,6 +1249,7 @@ function wire() {
     if (t.dataset.tab === 'compare') renderCompare();
     if (t.dataset.tab === 'npc') renderNpc();
     if (t.dataset.tab === 'craft') renderCraft();
+    if (t.dataset.tab === 'sellcraft') renderSellCraft();
     if (t.dataset.tab === 'metal') renderMetal();
   }));
   // Controls bound to a setting; the same setting (e.g. buy mode) can appear on several tabs.
@@ -1174,6 +1274,13 @@ function wire() {
     if (!tr) return;
     craftOpen = craftOpen === tr.dataset.id ? null : tr.dataset.id;
     renderCraft();
+  });
+  $('#scSearch').addEventListener('input', renderSellCraft);
+  $('#scTable tbody').addEventListener('click', (ev) => {
+    const tr = ev.target.closest('tr[data-id]');
+    if (!tr) return;
+    scOpen = scOpen === tr.dataset.id ? null : tr.dataset.id;
+    renderSellCraft();
   });
   $('#bestTable tbody').addEventListener('click', (ev) => {
     const tr = ev.target.closest('tr[data-id]');
