@@ -133,3 +133,7 @@ td.best { outline: 1px solid var(--good); outline-offset: -3px; border-radius: 4
 .gem-hold input { width: 90px; }
 #gemHoldTotal .stats { margin-top: 12px; }
 .nowrap { white-space: nowrap; }
+.key-banner { margin: 12px 16px 0; padding: 10px 14px; border-radius: 8px; border: 1px solid; font-size: 13px; }
+.key-banner.soon { border-color: #c98500; background: rgba(201, 133, 0, .12); }
+.key-banner.expired { border-color: var(--bad); background: rgba(230, 103, 103, .12); }
+.key-banner a { color: var(--accent); }

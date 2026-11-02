@@ -13,6 +13,7 @@ const SERIES = ['--series-1', '--series-2', '--series-3', '--series-4', '--serie
 // ---------- settings (localStorage) ----------
 const DEFAULTS = {
   apiKey: '', username: '', profileId: '',
+  apiKeySetAt: 0, apiKeyRejected: false, // when the key was entered; Hypixel said it is invalid
   auto: null, // { slots, qfLevel, hotmTier, profileName, fetchedAt }
   manualMode: false, slots: 2, qfLevel: 0, bzTax: 1.25,
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
@@ -1341,7 +1342,8 @@ async function getProfiles() {
   const uuid = await uuidFor(S.username);
   const res = await fetch(`${HYPIXEL}/profiles?uuid=${uuid}`, { headers: { 'API-Key': S.apiKey } });
   const body = await res.json().catch(() => ({}));
-  if (res.status === 403) throw new Error('API anahtarı geçersiz ya da süresi dolmuş. Development Key 3 günde bir yenilenmeli.');
+  if (res.status === 403) { S.apiKeyRejected = true; save(); renderKeyBanner(); throw new Error('API anahtarı geçersiz ya da süresi dolmuş. Development Key 3 günde bir yenilenmeli.'); }
+  if (S.apiKeyRejected) { S.apiKeyRejected = false; save(); renderKeyBanner(); }
   if (res.status === 429) throw new Error('Hypixel istek sınırına ulaşıldı, biraz bekleyip tekrar dene.');
   if (!res.ok || !body.success) throw new Error(body.cause || `Hypixel hata verdi (${res.status}).`);
   if (!body.profiles?.length) throw new Error('Bu oyuncunun Skyblock profili yok.');
@@ -1385,7 +1387,7 @@ async function fetchSackGems() {
 
 async function fetchProfile() {
   const btn = $('#fetchProfile'), status = $('#profileStatus');
-  S.username = $('#username').value.trim(); S.apiKey = $('#apiKey').value.trim(); save();
+  S.username = $('#username').value.trim(); setApiKey($('#apiKey').value.trim());
   if (!S.username || !S.apiKey) { status.textContent = 'Kullanıcı adı ve API anahtarı gerekli.'; return; }
   btn.disabled = true; status.textContent = 'Profil çekiliyor…';
   try {
@@ -1414,6 +1416,39 @@ function applyProfile(profileId) {
   save();
   $('#profileStatus').textContent = `${p.cute_name}: HotM ${m.tier}, Quick Forge ${m.qfLevel}, ${m.slots} forge slotu.`;
   refreshAll();
+}
+
+// ---------- API key expiry ----------
+// Hypixel Development Keys expire 3 days after they are made. The site remembers when the key was
+// entered and warns near the end, or as soon as Hypixel rejects it.
+const KEY_LIFE_MS = 3 * 86400 * 1000;
+function setApiKey(key) {
+  if (key !== S.apiKey) {
+    S.apiKey = key;
+    S.apiKeySetAt = key ? Date.now() : 0;
+    S.apiKeyRejected = false;
+  }
+  save(); renderKeyBanner();
+}
+function keyState() {
+  if (!S.apiKey) return null;
+  const left = S.apiKeySetAt + KEY_LIFE_MS - Date.now();
+  if (S.apiKeyRejected) return { level: 'expired', text: 'Hypixel API anahtarını reddetti: geçersiz ya da süresi dolmuş.' };
+  if (left <= 0) return { level: 'expired', text: 'API anahtarının süresi dolmuş olmalı (Development Key 3 gün geçerli).' };
+  const h = Math.ceil(left / 3600000);
+  if (left <= 12 * 3600000) return { level: 'soon', text: `API anahtarının süresi yaklaşık ${h} saat sonra doluyor.` };
+  return { level: 'ok', text: `API anahtarı yaklaşık ${h >= 24 ? `${Math.floor(h / 24)} gün ${h % 24} saat` : `${h} saat`} daha geçerli (${new Date(S.apiKeySetAt + KEY_LIFE_MS).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} civarı biter).` };
+}
+function renderKeyBanner() {
+  const st = keyState();
+  const el = $('#keyBanner');
+  el.hidden = !st || st.level === 'ok';
+  if (st && st.level !== 'ok') {
+    el.className = `key-banner ${st.level}`;
+    el.innerHTML = `<b>${st.text}</b> Yenilemek için <a href="https://developer.hypixel.net/dashboard" target="_blank" rel="noopener">developer.hypixel.net</a> → Dashboard → <b>Regenerate</b>, sonra yeni anahtarı <a href="#" data-go="settings">Profil ve ayarlar</a> sekmesine yapıştır.`;
+  }
+  const info = $('#apiKeyInfo');
+  if (info) info.textContent = st ? st.text : '';
 }
 
 // ---------- settings UI ----------
@@ -1522,6 +1557,14 @@ function wire() {
     save(); refreshAll(); openDetail(detailId);
   });
   $('#fetchProfile').addEventListener('click', fetchProfile);
+  $('#apiKey').addEventListener('change', (ev) => setApiKey(ev.target.value.trim()));
+  $('#keyBanner').addEventListener('click', (ev) => {
+    if (ev.target.dataset.go !== 'settings') return;
+    ev.preventDefault();
+    document.querySelector('.tab[data-tab=settings]').click();
+    $('#apiKey').focus();
+  });
+  setInterval(renderKeyBanner, 10 * 60 * 1000);
   $('#profileSelect').addEventListener('change', (ev) => applyProfile(ev.target.value));
   $('#manualMode').addEventListener('change', (ev) => { S.manualMode = ev.target.checked; save(); refreshAll(); });
   for (const [id, key, min, max] of [['#slots', 'slots', 1, 7], ['#qfLevel', 'qfLevel', 0, 20], ['#bzTax', 'bzTax', 0, 5]]) {
@@ -1541,7 +1584,10 @@ function wire() {
 }
 
 async function main() {
+  // Keys saved before the date was tracked: start counting from now.
+  if (S.apiKey && !S.apiKeySetAt) { S.apiKeySetAt = Date.now(); save(); }
   wire();
+  renderKeyBanner();
   renderSettings();
   try {
     await loadData();
