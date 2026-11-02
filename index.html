@@ -66,6 +66,7 @@
         </label>
         <label class="check"><input id="hideMissing" data-setting="hideMissing" type="checkbox" checked> Fiyatı eksik olanları gizle</label>
         <label class="check"><input id="hideLoss" data-setting="hideLoss" type="checkbox"> Zarar edenleri gizle</label>
+        <label class="check"><input data-setting="perfectOnly" type="checkbox"> Sadece Perfect gemstone'lar</label>
         <label class="check" title="Forge süresi 10 dakikadan kısa itemler saatlik sıralamada gizlenir, çünkü o hızda satacak kadar alıcı bulunmaz."><input id="showQuick" data-setting="showQuick" type="checkbox"> Saatlik sıralamada kısa süreli itemleri göster</label>
       </div>
       <div class="table-wrap">
@@ -261,6 +262,21 @@
         <span class="live-status muted small"></span>
       </div>
       <p class="muted small">Elindeki malzemeleri olduğu gibi satmak mı, craftlayıp çıkan itemi satmak mı daha çok kazandırır? İki taraftan da Bazaar vergisi ve AH ücretleri düşülür.</p>
+      <div class="card calc">
+        <h3>Hesapla</h3>
+        <div class="controls">
+          <label>Item <input id="scCalcItem" class="search" list="scCalcList" placeholder="Item adı yaz ya da tablodan seç…" autocomplete="off"></label>
+          <datalist id="scCalcList"></datalist>
+          <label>Adet <input id="scCalcQty" type="number" min="1" step="1"></label>
+          <label>Adet birimi
+            <select data-setting="scCalcUnit">
+              <option value="out">Craftlanacak item</option>
+              <option value="in">Elimdeki ana malzeme</option>
+            </select>
+          </label>
+        </div>
+        <div id="scCalcBody" class="muted small">Bir item seç ve adet yaz; malzemeleri satmakla craftlayıp satmak arasındaki toplam farkı burada görürsün.</div>
+      </div>
       <div class="controls">
         <input id="scSearch" class="search" type="search" placeholder="Item ara…">
         <label>Pazar (craftlanan item)
@@ -286,6 +302,7 @@
           </select>
         </label>
         <label class="check" title="NPC'ye satışta vergi yoktur. İşaretliyse her item için Bazaar/AH net fiyatı ile NPC fiyatından hangisi yüksekse o kullanılır."><input data-setting="scNpc" type="checkbox"> NPC'ye satmayı da hesaba kat</label>
+        <label class="check" title="Rough, Flawed, Fine ve Flawless gemstone tarifleri."><input data-setting="scGemOnly" type="checkbox"> Sadece gemstone'lar</label>
         <label class="check"><input data-setting="scOnlyCraft" type="checkbox"> Sadece craftlamanın daha kârlı olduğu itemler</label>
         <label class="check"><input data-setting="scHideMissing" type="checkbox"> Fiyatı eksik olanları gizle</label>
       </div>
