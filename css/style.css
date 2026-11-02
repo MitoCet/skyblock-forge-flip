@@ -137,3 +137,4 @@ td.best { outline: 1px solid var(--good); outline-offset: -3px; border-radius: 4
 .key-banner.soon { border-color: #c98500; background: rgba(201, 133, 0, .12); }
 .key-banner.expired { border-color: var(--bad); background: rgba(230, 103, 103, .12); }
 .key-banner a { color: var(--accent); }
+td.dim { opacity: .5; }

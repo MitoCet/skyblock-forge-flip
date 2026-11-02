@@ -984,13 +984,21 @@ function gemPlan(t, target) {
 }
 const fmtN = (n) => n.toLocaleString('tr-TR');
 // Name of the tier the best plan goes to; without amounts, compare one Flawless with 80 Fine.
+// Fine or Flawless by price alone: one Flawless against the 80 Fine it is made from.
+function priceBestTier(t) {
+  const fine = bestSale(`FINE_${t}_GEM`).net, flawless = bestSale(`FLAWLESS_${t}_GEM`).net;
+  return flawless != null && (fine == null || flawless > fine * 80) ? 'FLAWLESS' : 'FINE';
+}
+// When Flawless pays more per gem but the amounts don't reach one Flawless, both plans sell the same.
+function flawlessShort(t) {
+  const fine = gemPlanTo(t, 'FINE');
+  if (!fine || priceBestTier(t) !== 'FLAWLESS' || fine.sell[2] >= PLAN_STEP[2]) return 0;
+  return PLAN_STEP[2] - fine.sell[2];
+}
 function bestTierLabel(t) {
   const p = gemPlan(t, 'best');
-  const k = p ? p.target : (() => {
-    const fine = bestSale(`FINE_${t}_GEM`).net, flawless = bestSale(`FLAWLESS_${t}_GEM`).net;
-    return flawless != null && (fine == null || flawless > fine * 80) ? 'FLAWLESS' : 'FINE';
-  })();
-  return PLAN_TIERS.find(([x]) => x === k)[1];
+  if (p && flawlessShort(t)) return "Fine (Flawless'a yetmiyor)";
+  return tierLabel(p ? p.target : priceBestTier(t));
 }
 const bestOptionText = (t) => `En kârlı: ${bestTierLabel(t)}`;
 function gemPlanText(p) {
@@ -1011,7 +1019,9 @@ function gemHoldHtml(t) {
   let cmp = '';
   if (target === 'best' || target === best.target) {
     const gain = best.total - other.total;
+    const short = flawlessShort(t);
     cmp = gain > 0 ? `<span class="pos">${tierLabel(other.target)} olarak satmaktan +${coins(gain)} daha kârlı</span>`
+      : short ? `<span class="muted">Fiyata göre Flawless daha kârlı ama 1 Flawless için ${fmtN(short)} Fine daha gerekiyor, o yüzden Fine satılıyor.</span>`
       : `<span class="muted">${tierLabel(other.target)} ile aynı sonuç</span>`;
   } else if (p.total < best.total) {
     cmp = `<span class="neg">En kârlı seçeneğe (${tierLabel(best.target)}) göre ${coins(p.total - best.total)}</span>`;
@@ -1048,7 +1058,7 @@ function renderGemRank() {
       const s = bestSale(`${k}_${t}_GEM`);
       return { label, per: s.net == null ? null : (s.net / eq) * 1000, where: s.where };
     }).filter((x) => x.per != null).sort((a, b) => b.per - a.per);
-    return { t, name: gemName(t), tiers };
+    return { t, name: gemName(t), tiers, pick: tierLabel(priceBestTier(t)) };
   });
   const n = Math.max(0, ...rows.map((r) => r.tiers.length));
   const holdRow = (t) => {
@@ -1064,9 +1074,9 @@ function renderGemRank() {
       <td id="gemRes-${t}">${gemHoldHtml(t)}</td></tr>`;
   };
   box.innerHTML = `<h3>Gemstone tier sıralaması</h3>
-    <p class="muted small">Her gemstone için hangi tierda satmanın en kârlı olduğu. Değerler 1000 ham (Rough) gem başına net coin: Bazaar vergisi düşüldü${S.scNpc ? ', NPC daha iyiyse o sayıldı' : ''}.</p>
+    <p class="muted small">Her gemstone için hangi tierda satmanın en kârlı olduğu. Değerler 1000 ham (Rough) gem başına net coin: Bazaar vergisi düşüldü${S.scNpc ? ', NPC daha iyiyse o sayıldı' : ''}. Yeşil çerçeve Fine ile Flawless'tan daha kârlı olanı gösterir; Rough ve Flawed fiyatları büyük satışta tutmadığı için soluk.</p>
     <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${[...Array(n).keys()].map((i) => `<th>${i + 1}.</th>`).join('')}</tr></thead><tbody>
-    ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td${i === 0 ? ' class="best"' : ''}><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` <span class="nowrap">(−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})</span>` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
+    ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td class="${x.label === r.pick ? 'best' : x.label === 'Fine' || x.label === 'Flawless' ? '' : 'dim'}"><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` <span class="nowrap">(−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})</span>` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
     </tbody></table></div>
     <h3>Elimdeki gemstone'lar</h3>
     <div class="live"><button id="gemSackBtn" class="primary" type="button">Sack'lerden çek</button><span id="gemSackStatus" class="muted small">${esc(gemSackMsg)}</span></div>
