@@ -998,31 +998,43 @@ function gemPlanText(p) {
   const sells = PLAN_TIERS.map(([, label], i) => (p.sell[i] ? `${fmtN(p.sell[i])} ${label}` : null)).filter(Boolean);
   return (crafts.length ? `Craftla: ${crafts.join(', ')}. ` : '') + `Sat: ${sells.join(', ') || '—'}`;
 }
+// The less profitable of the two best-plan options (Fine or Flawless).
+function gemOtherPlan(t, best) {
+  return gemPlanTo(t, best.target === 'FLAWLESS' ? 'FINE' : 'FLAWLESS');
+}
+const tierLabel = (k) => PLAN_TIERS.find(([x]) => x === k)?.[1] || k;
 function gemHoldHtml(t) {
   const target = S.gemHold[t]?.target || 'best';
   const p = gemPlan(t, target);
   if (!p) return '<span class="muted small">Adet yaz</span>';
-  const best = gemPlan(t, 'best'), asis = gemPlan(t, 'asis');
-  const vsBest = target !== 'best' ? p.total - best.total : 0;
-  const vsAsis = p.total - asis.total;
+  const best = gemPlan(t, 'best'), other = gemOtherPlan(t, best);
+  let cmp = '';
+  if (target === 'best' || target === best.target) {
+    const gain = best.total - other.total;
+    cmp = gain > 0 ? `<span class="pos">${tierLabel(other.target)} olarak satmaktan +${coins(gain)} daha kârlı</span>`
+      : `<span class="muted">${tierLabel(other.target)} ile aynı sonuç</span>`;
+  } else if (p.total < best.total) {
+    cmp = `<span class="neg">En kârlı seçeneğe (${tierLabel(best.target)}) göre ${coins(p.total - best.total)}</span>`;
+  }
   return `<b>${coins(p.total)}</b>${p.missing ? ' <span class="warn">bazı tierların fiyatı yok, 0 sayıldı</span>' : ''}
     <div class="small">${gemPlanText(p)}</div>
-    <div class="small">${vsAsis > 0 ? `<span class="pos">Olduğu gibi satmaktan +${coins(vsAsis)}</span>` : vsAsis < 0 ? `<span class="neg">Olduğu gibi satmaktan ${coins(vsAsis)}</span>` : ''}
-    ${vsBest < 0 ? ` <span class="neg">İdeale göre ${coins(vsBest)}</span>` : ''}</div>`;
+    <div class="small">${cmp}</div>`;
 }
 function gemHoldTotal(types) {
   const ideal = types.map((t) => gemPlan(t, 'best')).filter(Boolean);
   if (!ideal.length) return '';
   const chosen = types.map((t) => gemPlan(t, S.gemHold[t]?.target || 'best')).filter(Boolean);
-  const asis = types.map((t) => gemPlan(t, 'asis')).filter(Boolean);
+  const others = types.map((t) => { const b = gemPlan(t, 'best'); return b && gemOtherPlan(t, b); }).filter(Boolean);
   const sum = (l) => l.reduce((a, p) => a + p.total, 0);
   const st = (k, v, cls = '') => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${coins(v)}</div></div>`;
   const diff = sum(chosen) - sum(ideal);
+  const gain = sum(ideal) - sum(others);
   return `<div class="stats">
     ${st('Hepsini en kârlı şekilde satarsan', sum(ideal), 'pos')}
     ${st('Seçtiğin tierlarla', sum(chosen), diff < 0 ? 'neg' : '')}
-    ${st('Hiç craftlamadan satarsan', sum(asis))}
-  </div>`;
+    ${st('Daha az kârlı olan seçenekle satarsan', sum(others))}
+  </div>
+  ${gain > 0 ? `<p class="small pos">En kârlı seçenekler, daha az kârlı olanlardan toplam +${coins(gain)} fazla kazandırıyor.</p>` : ''}`;
 }
 
 function renderGemRank() {
