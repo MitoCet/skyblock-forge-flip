@@ -940,8 +940,8 @@ function renderSellCraftCalc(rows) {
 }
 
 // Gemstone tiers ranked by what one rough gem is worth when sold at that tier.
-// Rough → Flawed → Fine → Flawless take 80 each (crafting table), Perfect takes 5 Flawless (forge).
-const GEM_TIERS = [['ROUGH', 'Rough', 1], ['FLAWED', 'Flawed', 80], ['FINE', 'Fine', 6400], ['FLAWLESS', 'Flawless', 512000], ['PERFECT', 'Perfect', 2560000]];
+// Rough → Flawed → Fine → Flawless take 80 each (crafting table). Perfect (a forge) is left out.
+const GEM_TIERS = [['ROUGH', 'Rough', 1], ['FLAWED', 'Flawed', 80], ['FINE', 'Fine', 6400], ['FLAWLESS', 'Flawless', 512000]];
 function renderGemRank() {
   const box = $('#gemRank');
   box.hidden = !S.scGemOnly;
@@ -959,8 +959,7 @@ function renderGemRank() {
     <p class="muted small">Her gemstone için hangi tierda satmanın en kârlı olduğu. Değerler 1000 ham (Rough) gem başına net coin: Bazaar vergisi düşüldü${S.scNpc ? ', NPC daha iyiyse o sayıldı' : ''}.</p>
     <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${[...Array(n).keys()].map((i) => `<th>${i + 1}.</th>`).join('')}</tr></thead><tbody>
     ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td${i === 0 ? ' class="best"' : ''}><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` (−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
-    </tbody></table></div>
-    <p class="muted small">Perfect, 5 Flawless ve 1 Crystal ile forge'da 20 saatte yapılır; Crystal satılamadığı için bedava sayıldı.</p>`;
+    </tbody></table></div>`;
 }
 
 async function renderSellCraft() {
