@@ -948,6 +948,7 @@ const GEM_TIERS = [['ROUGH', 'Rough', 1], ['FLAWED', 'Flawed', 80], ['FINE', 'Fi
 // never down. `target` is 'best' (the plan that earns most) or a tier key: everything below it is
 // crafted up to it as far as full crafts allow; tiers at or above it are sold as they are.
 const GEM_STEP = 80;
+let gemSackMsg = 'Gemstone Sack\'indeki Rough, Flawed, Fine ve Flawless adetlerini profilinden doldurur.';
 function gemPlan(t, target) {
   const h = S.gemHold[t] || {};
   const held = GEM_TIERS.map(([k]) => Math.max(0, Math.floor(Number(h[k]) || 0)));
@@ -1047,11 +1048,13 @@ function renderGemRank() {
     ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td${i === 0 ? ' class="best"' : ''}><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` <span class="nowrap">(−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})</span>` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
     </tbody></table></div>
     <h3>Elimdeki gemstone'lar</h3>
+    <div class="live"><button id="gemSackBtn" class="primary" type="button">Sack'lerden çek</button><span id="gemSackStatus" class="muted small">${esc(gemSackMsg)}</span></div>
     <p class="muted small">Her tierdan kaç tane olduğunu yaz. Gemler sadece yukarı craftlanır (80 tane = 1 üst tier), üst tier aşağı çevrilemez, o yüzden elindeki üst tierlar en az o tierda satılır. Tam craft'a yetmeyen artanlar bulundukları tierda satılır. "Ne yapmalı" sütunundan ideal yerine kendi seçtiğin tieri da hesaplatabilirsin.</p>
     <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${GEM_TIERS.map(([, label]) => `<th>${label}</th>`).join('')}<th>Ne yapmalı</th><th>Sonuç (net)</th></tr></thead><tbody>
     ${types.map(holdRow).join('')}
     </tbody></table></div>
     <div id="gemHoldTotal">${gemHoldTotal(types)}</div>`;
+  $('#gemSackBtn').onclick = fetchSackGems;
   box.oninput = (ev) => {
     const { gem, k } = ev.target.dataset;
     if (!gem) return;
@@ -1335,20 +1338,60 @@ function readMining(member) {
 }
 
 let fetchedProfiles = null;
+// Reads the player's Skyblock profiles with their API key (also used for sacks).
+async function getProfiles() {
+  const uuid = await uuidFor(S.username);
+  const res = await fetch(`${HYPIXEL}/profiles?uuid=${uuid}`, { headers: { 'API-Key': S.apiKey } });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 403) throw new Error('API anahtarı geçersiz ya da süresi dolmuş. Development Key 3 günde bir yenilenmeli.');
+  if (res.status === 429) throw new Error('Hypixel istek sınırına ulaşıldı, biraz bekleyip tekrar dene.');
+  if (!res.ok || !body.success) throw new Error(body.cause || `Hypixel hata verdi (${res.status}).`);
+  if (!body.profiles?.length) throw new Error('Bu oyuncunun Skyblock profili yok.');
+  fetchedProfiles = { uuid, profiles: body.profiles };
+  return body;
+}
+
+// Fills the gemstone holdings table from the gemstones in the player's sacks.
+async function fetchSackGems() {
+  const btn = $('#gemSackBtn'), status = $('#gemSackStatus');
+  if (!S.username || !S.apiKey) { status.textContent = 'Önce "Profil ve ayarlar" sekmesine kullanıcı adını ve API anahtarını gir.'; return; }
+  btn.disabled = true; status.textContent = 'Sack\'ler çekiliyor…';
+  try {
+    const { profiles } = await getProfiles();
+    const p = profiles.find((x) => x.profile_id === S.profileId) || profiles.find((x) => x.selected) || profiles[0];
+    const member = p.members[fetchedProfiles.uuid];
+    const sacks = member?.inventory?.sacks_counts ?? member?.sacks_counts;
+    if (!sacks) throw new Error('Sack bilgisi gelmedi. Oyunda SkyBlock Menu → Settings → API Settings\'ten Inventory API\'yi aç, birkaç dakika sonra tekrar dene.');
+    const hold = {};
+    let total = 0;
+    for (const [id, n] of Object.entries(sacks)) {
+      const m = id.match(/^(ROUGH|FLAWED|FINE|FLAWLESS)_([A-Z]+)_GEM$/);
+      if (!m || !(n > 0)) continue;
+      (hold[m[2]] ||= {})[m[1]] = n;
+      total += n;
+    }
+    // Keep each gem's chosen target; replace the amounts.
+    for (const t of new Set([...Object.keys(S.gemHold), ...Object.keys(hold)])) {
+      S.gemHold[t] = { target: S.gemHold[t]?.target, ...hold[t] };
+    }
+    save();
+    gemSackMsg = `${p.cute_name} profilinin sack'lerinden ${total.toLocaleString('tr-TR')} gemstone alındı (${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}).`;
+    renderGemRank();
+    return;
+  } catch (err) {
+    status.textContent = err instanceof TypeError ? 'Hypixel\'e bağlanılamadı. İnternet bağlantını kontrol edip tekrar dene.' : err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function fetchProfile() {
   const btn = $('#fetchProfile'), status = $('#profileStatus');
   S.username = $('#username').value.trim(); S.apiKey = $('#apiKey').value.trim(); save();
   if (!S.username || !S.apiKey) { status.textContent = 'Kullanıcı adı ve API anahtarı gerekli.'; return; }
   btn.disabled = true; status.textContent = 'Profil çekiliyor…';
   try {
-    const uuid = await uuidFor(S.username);
-    const res = await fetch(`${HYPIXEL}/profiles?uuid=${uuid}`, { headers: { 'API-Key': S.apiKey } });
-    const body = await res.json().catch(() => ({}));
-    if (res.status === 403) throw new Error('API anahtarı geçersiz ya da süresi dolmuş. Development Key 3 günde bir yenilenmeli.');
-    if (res.status === 429) throw new Error('Hypixel istek sınırına ulaşıldı, biraz bekleyip tekrar dene.');
-    if (!res.ok || !body.success) throw new Error(body.cause || `Hypixel hata verdi (${res.status}).`);
-    if (!body.profiles?.length) throw new Error('Bu oyuncunun Skyblock profili yok.');
-    fetchedProfiles = { uuid, profiles: body.profiles };
+    const body = await getProfiles();
     const sel = $('#profileSelect');
     sel.innerHTML = body.profiles.map((p) => `<option value="${p.profile_id}">${esc(p.cute_name)}${p.selected ? ' (aktif)' : ''}</option>`).join('');
     const chosen = body.profiles.find((p) => p.profile_id === S.profileId) || body.profiles.find((p) => p.selected) || body.profiles[0];
