@@ -35,7 +35,7 @@ Forge slot sayısı HotM seviyesinden tahmin edilir (HotM 1–2: 2, HotM 3: 3, H
 
 1. **Fiyat toplayıcıyı başlat:** GitHub'da repo → **Actions** → "Collect prices" → **Run workflow**. Sonra her 15 dakikada bir kendiliğinden çalışır.
 2. **Siteyi yayınla:** repo → **Settings** → **Pages** → Source: "Deploy from a branch", Branch: `main`, klasör `/ (root)` → **Save**. Site birkaç dakika sonra `https://mitocet.github.io/skyblock-forge-flip/` adresinde açılır.
-3. **Profil:** Sitede "Profil ve ayarlar" sekmesine kullanıcı adını ve Hypixel API anahtarını gir, "Profili çek"e bas. Anahtar sadece tarayıcında saklanır ve sadece `api.hypixel.net`'e gönderilir. Development Key 3 günde bir yenilenmeli.
+3. **Profil:** Sitede "Profil ve ayarlar" sekmesine kullanıcı adını ve Hypixel API anahtarını gir, "Profili çek"e bas. Anahtar sadece tarayıcında saklanır ve sadece `api.hypixel.net`'e gönderilir. Development Key 3 günde bir yenilenmeli. Site anahtarı girdiğin zamanı hatırlar: süresi dolmasına 12 saat kala, dolunca ya da Hypixel anahtarı reddedince sayfanın üstünde yenileme adımlarıyla bir uyarı gösterir.
 
 Bilgisayarında açmak için `index.html` dosyasını tarayıcıda açman da yeterli; veriyi yine GitHub'daki `data` dalından okur.
 

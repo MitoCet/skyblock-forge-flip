@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Skyblock Forge Flip</title>
-  <link rel="stylesheet" href="css/style.css?v=20261102e">
+  <link rel="stylesheet" href="css/style.css?v=20261102f">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js" defer></script>
-  <script src="js/app.js?v=20261102e" defer></script>
+  <script src="js/app.js?v=20261102f" defer></script>
 </head>
 <body>
   <header class="top">
@@ -26,6 +26,8 @@
     <button class="tab" data-tab="metal">Dwarven Metal Mining</button>
     <button class="tab" data-tab="settings">Profil ve ayarlar</button>
   </nav>
+
+  <div id="keyBanner" class="key-banner" hidden></div>
 
   <main>
     <section id="tab-best" class="panel active">
@@ -367,6 +369,7 @@
             <input id="apiKey" type="password" autocomplete="off" placeholder="developer.hypixel.net'ten aldığın anahtar">
           </label>
           <p class="muted small">Anahtar sadece bu tarayıcıda saklanır ve sadece api.hypixel.net'e gönderilir.</p>
+          <p class="small" id="apiKeyInfo"></p>
           <label id="profileSelectWrap" hidden>Profil <select id="profileSelect"></select></label>
           <button id="fetchProfile" class="primary">Profili çek</button>
           <p id="profileStatus" class="small"></p>
