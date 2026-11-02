@@ -23,7 +23,7 @@ const DEFAULTS = {
   npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
   scMarket: 'all', scSort: 'diff', scNpc: true, scOnlyCraft: false, scHideMissing: true,
-  scGemOnly: false, scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', perfectOnly: false, gemHold: {},
+  scGemOnly: false, scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', perfectOnly: false, gemHold: {}, gemCountLow: false,
   metalTungsten: 640, metalUmber: 640, metalUnit: 'ench', metalOwnPlates: false,
 };
 let S = load();
@@ -972,9 +972,13 @@ function gemPlanTo(t, target) {
       if (i < last) pool = held[i + 1];
     }
   }
-  const missing = sell.some((n, i) => n > 0 && v[i] == null);
-  const total = sell.reduce((a, n, i) => a + n * (v[i] ?? 0), 0);
-  return { held, sell, made, total, missing, target };
+  // Rough and Flawed left over when going for Fine or higher are left out unless the box is ticked:
+  // their prices don't hold on a large sale.
+  const FINE_I = PLAN_TIERS.findIndex(([k]) => k === 'FINE');
+  const skip = sell.map((n, i) => n > 0 && !S.gemCountLow && T >= FINE_I && i < FINE_I);
+  const missing = sell.some((n, i) => n > 0 && !skip[i] && v[i] == null);
+  const total = sell.reduce((a, n, i) => a + (skip[i] ? 0 : n * (v[i] ?? 0)), 0);
+  return { held, sell, made, total, missing, target, skip };
 }
 function gemPlan(t, target) {
   if (target !== 'best') return gemPlanTo(t, target);
@@ -984,45 +988,69 @@ function gemPlan(t, target) {
 }
 const fmtN = (n) => n.toLocaleString('tr-TR');
 // Name of the tier the best plan goes to; without amounts, compare one Flawless with 80 Fine.
+// Fine or Flawless by price alone: one Flawless against the 80 Fine it is made from.
+function priceBestTier(t) {
+  const fine = bestSale(`FINE_${t}_GEM`).net, flawless = bestSale(`FLAWLESS_${t}_GEM`).net;
+  return flawless != null && (fine == null || flawless > fine * 80) ? 'FLAWLESS' : 'FINE';
+}
+// When Flawless pays more per gem but the amounts don't reach one Flawless, both plans sell the same.
+function flawlessShort(t) {
+  const fine = gemPlanTo(t, 'FINE');
+  if (!fine || priceBestTier(t) !== 'FLAWLESS' || fine.sell[2] >= PLAN_STEP[2]) return 0;
+  return PLAN_STEP[2] - fine.sell[2];
+}
 function bestTierLabel(t) {
   const p = gemPlan(t, 'best');
-  const k = p ? p.target : (() => {
-    const fine = bestSale(`FINE_${t}_GEM`).net, flawless = bestSale(`FLAWLESS_${t}_GEM`).net;
-    return flawless != null && (fine == null || flawless > fine * 80) ? 'FLAWLESS' : 'FINE';
-  })();
-  return PLAN_TIERS.find(([x]) => x === k)[1];
+  if (p && flawlessShort(t)) return "Fine (Flawless'a yetmiyor)";
+  return tierLabel(p ? p.target : priceBestTier(t));
 }
 const bestOptionText = (t) => `En kârlı: ${bestTierLabel(t)}`;
 function gemPlanText(p) {
   const crafts = PLAN_TIERS.map(([, label], i) => (p.made[i] ? `${fmtN(p.made[i])} ${label}` : null)).filter(Boolean);
-  const sells = PLAN_TIERS.map(([, label], i) => (p.sell[i] ? `${fmtN(p.sell[i])} ${label}` : null)).filter(Boolean);
-  return (crafts.length ? `Craftla: ${crafts.join(', ')}. ` : '') + `Sat: ${sells.join(', ') || '—'}`;
+  const sells = PLAN_TIERS.map(([, label], i) => (p.sell[i] && !p.skip[i] ? `${fmtN(p.sell[i])} ${label}` : null)).filter(Boolean);
+  const skipped = PLAN_TIERS.map(([, label], i) => (p.sell[i] && p.skip[i] ? `${fmtN(p.sell[i])} ${label}` : null)).filter(Boolean);
+  return (crafts.length ? `Craftla: ${crafts.join(', ')}. ` : '') + `Sat: ${sells.join(', ') || '—'}`
+    + (skipped.length ? `. <span class="muted">Hesaba katılmadı: ${skipped.join(', ')}</span>` : '');
 }
+// The less profitable of the two best-plan options (Fine or Flawless).
+function gemOtherPlan(t, best) {
+  return gemPlanTo(t, best.target === 'FLAWLESS' ? 'FINE' : 'FLAWLESS');
+}
+const tierLabel = (k) => PLAN_TIERS.find(([x]) => x === k)?.[1] || k;
 function gemHoldHtml(t) {
   const target = S.gemHold[t]?.target || 'best';
   const p = gemPlan(t, target);
   if (!p) return '<span class="muted small">Adet yaz</span>';
-  const best = gemPlan(t, 'best'), asis = gemPlan(t, 'asis');
-  const vsBest = target !== 'best' ? p.total - best.total : 0;
-  const vsAsis = p.total - asis.total;
+  const best = gemPlan(t, 'best'), other = gemOtherPlan(t, best);
+  let cmp = '';
+  if (target === 'best' || target === best.target) {
+    const gain = best.total - other.total;
+    const short = flawlessShort(t);
+    cmp = gain > 0 ? `<span class="pos">${tierLabel(other.target)} olarak satmaktan +${coins(gain)} daha kârlı</span>`
+      : short ? `<span class="muted">Fiyata göre Flawless daha kârlı ama 1 Flawless için ${fmtN(short)} Fine daha gerekiyor, o yüzden Fine satılıyor.</span>`
+      : `<span class="muted">${tierLabel(other.target)} ile aynı sonuç</span>`;
+  } else if (p.total < best.total) {
+    cmp = `<span class="neg">En kârlı seçeneğe (${tierLabel(best.target)}) göre ${coins(p.total - best.total)}</span>`;
+  }
   return `<b>${coins(p.total)}</b>${p.missing ? ' <span class="warn">bazı tierların fiyatı yok, 0 sayıldı</span>' : ''}
     <div class="small">${gemPlanText(p)}</div>
-    <div class="small">${vsAsis > 0 ? `<span class="pos">Olduğu gibi satmaktan +${coins(vsAsis)}</span>` : vsAsis < 0 ? `<span class="neg">Olduğu gibi satmaktan ${coins(vsAsis)}</span>` : ''}
-    ${vsBest < 0 ? ` <span class="neg">İdeale göre ${coins(vsBest)}</span>` : ''}</div>`;
+    <div class="small">${cmp}</div>`;
 }
 function gemHoldTotal(types) {
   const ideal = types.map((t) => gemPlan(t, 'best')).filter(Boolean);
   if (!ideal.length) return '';
   const chosen = types.map((t) => gemPlan(t, S.gemHold[t]?.target || 'best')).filter(Boolean);
-  const asis = types.map((t) => gemPlan(t, 'asis')).filter(Boolean);
+  const others = types.map((t) => { const b = gemPlan(t, 'best'); return b && gemOtherPlan(t, b); }).filter(Boolean);
   const sum = (l) => l.reduce((a, p) => a + p.total, 0);
   const st = (k, v, cls = '') => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${coins(v)}</div></div>`;
   const diff = sum(chosen) - sum(ideal);
+  const gain = sum(ideal) - sum(others);
   return `<div class="stats">
     ${st('Hepsini en kârlı şekilde satarsan', sum(ideal), 'pos')}
     ${st('Seçtiğin tierlarla', sum(chosen), diff < 0 ? 'neg' : '')}
-    ${st('Hiç craftlamadan satarsan', sum(asis))}
-  </div>`;
+    ${st('Daha az kârlı olan seçenekle satarsan', sum(others))}
+  </div>
+  ${gain > 0 ? `<p class="small pos">En kârlı seçenekler, daha az kârlı olanlardan toplam +${coins(gain)} fazla kazandırıyor.</p>` : ''}`;
 }
 
 function renderGemRank() {
@@ -1036,7 +1064,7 @@ function renderGemRank() {
       const s = bestSale(`${k}_${t}_GEM`);
       return { label, per: s.net == null ? null : (s.net / eq) * 1000, where: s.where };
     }).filter((x) => x.per != null).sort((a, b) => b.per - a.per);
-    return { t, name: gemName(t), tiers };
+    return { t, name: gemName(t), tiers, pick: tierLabel(priceBestTier(t)) };
   });
   const n = Math.max(0, ...rows.map((r) => r.tiers.length));
   const holdRow = (t) => {
@@ -1052,11 +1080,12 @@ function renderGemRank() {
       <td id="gemRes-${t}">${gemHoldHtml(t)}</td></tr>`;
   };
   box.innerHTML = `<h3>Gemstone tier sıralaması</h3>
-    <p class="muted small">Her gemstone için hangi tierda satmanın en kârlı olduğu. Değerler 1000 ham (Rough) gem başına net coin: Bazaar vergisi düşüldü${S.scNpc ? ', NPC daha iyiyse o sayıldı' : ''}.</p>
+    <p class="muted small">Her gemstone için hangi tierda satmanın en kârlı olduğu. Değerler 1000 ham (Rough) gem başına net coin: Bazaar vergisi düşüldü${S.scNpc ? ', NPC daha iyiyse o sayıldı' : ''}. Yeşil çerçeve Fine ile Flawless'tan daha kârlı olanı gösterir; Rough ve Flawed fiyatları büyük satışta tutmadığı için soluk.</p>
     <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${[...Array(n).keys()].map((i) => `<th>${i + 1}.</th>`).join('')}</tr></thead><tbody>
-    ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td${i === 0 ? ' class="best"' : ''}><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` <span class="nowrap">(−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})</span>` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
+    ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td class="${x.label === r.pick ? 'best' : x.label === 'Fine' || x.label === 'Flawless' ? '' : 'dim'}"><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` <span class="nowrap">(−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})</span>` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
     </tbody></table></div>
     <h3>Elimdeki gemstone'lar</h3>
+    <label class="check" title="Fine'a craftlanamayacak kadar az kalan Rough ve Flawed gemler varsayılan olarak toplama katılmaz."><input type="checkbox" id="gemCountLow"${S.gemCountLow ? ' checked' : ''}> Fine'a craftlanamayan Rough/Flawed artıklarını da hesaba kat</label>
     <div class="live"><button id="gemSackBtn" class="primary" type="button">Sack'lerden çek</button><span id="gemSackStatus" class="muted small">${esc(gemSackMsg)}</span></div>
     <p class="muted small">Her tierdan kaç tane olduğunu yaz. Gemler sadece yukarı craftlanır (80 tane = 1 üst tier), üst tier aşağı çevrilemez, o yüzden elindeki üst tierlar en az o tierda satılır. Tam craft'a yetmeyen artanlar bulundukları tierda satılır. "En kârlı" seçeneği gemleri Fine'a kadar ya da Flawless'a kadar craftlayıp satmaktan hangisi daha çok kazandırıyorsa onu kullanır, çünkü Rough ve Flawed fiyatları büyük satışta tutmaz (sıralamada yine görünürler). "Ne yapmalı" sütunundan kendi seçtiğin tieri da hesaplatabilirsin.</p>
     <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${GEM_TIERS.map(([, label]) => `<th>${label}</th>`).join('')}<th>Ne yapmalı</th><th>Sonuç (net)</th></tr></thead><tbody>
@@ -1064,6 +1093,7 @@ function renderGemRank() {
     </tbody></table></div>
     <div id="gemHoldTotal">${gemHoldTotal(types)}</div>`;
   $('#gemSackBtn').onclick = fetchSackGems;
+  $('#gemCountLow').onchange = (ev) => { S.gemCountLow = ev.target.checked; save(); renderGemRank(); };
   box.oninput = (ev) => {
     const { gem, k } = ev.target.dataset;
     if (!gem) return;
