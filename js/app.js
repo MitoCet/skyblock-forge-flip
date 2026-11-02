@@ -983,6 +983,16 @@ function gemPlan(t, target) {
   return flawless.total > fine.total && !flawless.missing ? flawless : fine;
 }
 const fmtN = (n) => n.toLocaleString('tr-TR');
+// Name of the tier the best plan goes to; without amounts, compare one Flawless with 80 Fine.
+function bestTierLabel(t) {
+  const p = gemPlan(t, 'best');
+  const k = p ? p.target : (() => {
+    const fine = bestSale(`FINE_${t}_GEM`).net, flawless = bestSale(`FLAWLESS_${t}_GEM`).net;
+    return flawless != null && (fine == null || flawless > fine * 80) ? 'FLAWLESS' : 'FINE';
+  })();
+  return PLAN_TIERS.find(([x]) => x === k)[1];
+}
+const bestOptionText = (t) => `En kârlı: ${bestTierLabel(t)}`;
 function gemPlanText(p) {
   const crafts = PLAN_TIERS.map(([, label], i) => (p.made[i] ? `${fmtN(p.made[i])} ${label}` : null)).filter(Boolean);
   const sells = PLAN_TIERS.map(([, label], i) => (p.sell[i] ? `${fmtN(p.sell[i])} ${label}` : null)).filter(Boolean);
@@ -1009,7 +1019,7 @@ function gemHoldTotal(types) {
   const st = (k, v, cls = '') => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${coins(v)}</div></div>`;
   const diff = sum(chosen) - sum(ideal);
   return `<div class="stats">
-    ${st('Hepsini en kârlı şekilde satarsan (Fine ya da Flawless)', sum(ideal), 'pos')}
+    ${st('Hepsini en kârlı şekilde satarsan', sum(ideal), 'pos')}
     ${st('Seçtiğin tierlarla', sum(chosen), diff < 0 ? 'neg' : '')}
     ${st('Hiç craftlamadan satarsan', sum(asis))}
   </div>`;
@@ -1035,7 +1045,7 @@ function renderGemRank() {
     return `<tr><td>${esc(gemName(t))}</td>
       ${GEM_TIERS.map(([k]) => `<td class="gem-hold"><input type="number" min="0" step="1" placeholder="0" data-gem="${t}" data-k="${k}" value="${h[k] || ''}"></td>`).join('')}
       <td class="gem-hold"><select data-gem="${t}" data-k="target">
-        <option value="best"${target === 'best' ? ' selected' : ''}>En kârlı (Fine ya da Flawless)</option>
+        <option value="best"${target === 'best' ? ' selected' : ''}>${bestOptionText(t)}</option>
         <option value="asis"${target === 'asis' ? ' selected' : ''}>Olduğu gibi sat</option>
         ${PLAN_TIERS.slice(1).map(([k]) => `<option value="${k}"${target === k ? ' selected' : ''}>${TO_TIER[k]} kadar craftla</option>`).join('')}
       </select></td>
@@ -1060,6 +1070,7 @@ function renderGemRank() {
     S.gemHold[gem] = { ...S.gemHold[gem], [k]: k === 'target' ? ev.target.value : Number(ev.target.value) || 0 };
     save();
     $(`#gemRes-${gem}`).innerHTML = gemHoldHtml(gem);
+    box.querySelector(`select[data-gem="${gem}"] option[value=best]`).textContent = bestOptionText(gem);
     $('#gemHoldTotal').innerHTML = gemHoldTotal(types);
   };
 }
