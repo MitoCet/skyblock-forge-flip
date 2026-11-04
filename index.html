@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Skyblock Forge Flip</title>
-  <link rel="stylesheet" href="css/style.css?v=20261104a">
+  <link rel="stylesheet" href="css/style.css?v=20261104b">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js" defer></script>
-  <script src="js/app.js?v=20261104a" defer></script>
+  <script src="js/app.js?v=20261104b" defer></script>
 </head>
 <body>
   <header class="top">
@@ -23,8 +23,7 @@
     <button class="tab" data-tab="npc">NPC vs Bazaar</button>
     <button class="tab" data-tab="craft">Craft mı al mı</button>
     <button class="tab" data-tab="sellcraft">Craftla mı sat mı</button>
-    <button class="tab" data-tab="metal">Dwarven Metal Mining</button>
-    <button class="tab" data-tab="gem">Gemstone</button>
+    <button class="tab" data-tab="mine">Mining kârları</button>
     <button class="tab" data-tab="settings">Profil ve ayarlar</button>
   </nav>
 
@@ -326,21 +325,27 @@
       <p class="muted small" id="scNote"></p>
     </section>
 
-    <section id="tab-metal" class="panel">
+    <section id="tab-mine" class="panel">
       <div class="live">
         <button class="primary live-btn" type="button" data-ah="off">Güncel fiyatları çek</button>
         <span class="live-status muted small"></span>
       </div>
+      <div class="live">
+        <button id="mineSackBtn" class="primary" type="button">Sack'lerden çek</button>
+        <span id="mineSackStatus" class="muted small">Tungsten, Umber, Glacite, Mithril, Titanium, Hard Stone, Refined Mineral, Glossy Gemstone ve gemstone adetlerini profilindeki sack'lerden doldurur.</span>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Gösterilen">
+        <label><input type="radio" name="mineView" value="all" data-setting="mineView"> Hepsi</label>
+        <label><input type="radio" name="mineView" value="TUNGSTEN" data-setting="mineView"> Tungsten</label>
+        <label><input type="radio" name="mineView" value="UMBER" data-setting="mineView"> Umber</label>
+        <label><input type="radio" name="mineView" value="GLACITE" data-setting="mineView"> Glacite</label>
+        <label><input type="radio" name="mineView" value="MITHRIL" data-setting="mineView"> Mithril</label>
+        <label><input type="radio" name="mineView" value="TITANIUM" data-setting="mineView"> Titanium</label>
+        <label><input type="radio" name="mineView" value="HARD_STONE" data-setting="mineView"> Hard Stone</label>
+        <label><input type="radio" name="mineView" value="OTHER" data-setting="mineView"> Refined Mineral / Glossy</label>
+        <label><input type="radio" name="mineView" value="GEM" data-setting="mineView"> Gemstone</label>
+      </div>
       <div class="controls">
-        <label>Tungsten miktarı <input type="number" min="0" step="1" data-setting="metalTungsten"></label>
-        <label>Umber miktarı <input type="number" min="0" step="1" data-setting="metalUmber"></label>
-        <label>Miktar birimi
-          <select data-setting="metalUnit">
-            <option value="ench">Enchanted</option>
-            <option value="raw">Ham (160 ham = 1 Enchanted)</option>
-          </select>
-        </label>
-        <label class="check" title="Perfect Plate ve Skeleton Key hesabında Tungsten ve Umber Plate'i satın alma fiyatıyla değil, satsan alacağın net fiyatla sayar."><input type="checkbox" data-setting="metalOwnPlates"> Tungsten/Umber Plate'i kendim yapıyorum</label>
         <label>Alış (ek malzemeler)
           <select data-setting="buyMode">
             <option value="instant">Anında alım</option>
@@ -353,52 +358,35 @@
             <option value="instant">Anında satış</option>
           </select>
         </label>
+        <label class="check" title="Perfect Plate ve Skeleton Key hesabında Tungsten ve Umber Plate'i satın alma fiyatıyla değil, satsan alacağın net fiyatla sayar."><input type="checkbox" data-setting="metalOwnPlates"> Tungsten/Umber Plate'i kendim yapıyorum</label>
+        <label class="check" title="NPC'ye satışta vergi yoktur. İşaretliyse gemstone hesabında Bazaar net fiyatı ile NPC fiyatından hangisi yüksekse o kullanılır."><input data-setting="scNpc" type="checkbox"> Gemstone'da NPC'ye satmayı da hesaba kat</label>
       </div>
-      <div id="metalBody"></div>
-      <p class="muted small" id="metalNote"></p>
-    </section>
-
-    <section id="tab-gem" class="panel">
-      <div class="live">
-        <button class="primary live-btn" type="button" data-ah="off">Güncel fiyatları çek</button>
-        <span class="live-status muted small"></span>
-      </div>
-      <div class="controls">
-        <label>Malzeme alışı
-          <select data-setting="buyMode">
-            <option value="instant">Anında alım</option>
-            <option value="order">Buy order</option>
-          </select>
-        </label>
-        <label>Bazaar satışı
-          <select data-setting="sellMode">
-            <option value="offer">Sell offer</option>
-            <option value="instant">Anında satış</option>
-          </select>
-        </label>
-        <label class="check" title="NPC'ye satışta vergi yoktur. İşaretliyse tier sıralamasında Bazaar net fiyatı ile NPC fiyatından hangisi yüksekse o kullanılır."><input data-setting="scNpc" type="checkbox"> NPC'ye satmayı da hesaba kat</label>
-      </div>
-      <div class="card calc">
-        <h3>Perfect gemstone forge</h3>
-        <p class="muted small">Flawless gemlerden forgelanan Perfect gemstone'lar. Crystal'lar (Ruby Crystal gibi) satılamadığı için maliyete 0 olarak katılır. Detay ve grafik için satıra tıkla.</p>
-        <div class="table-wrap">
-          <table id="gemForgeTable">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th class="num">Maliyet</th>
-                <th class="num">Satış (net)</th>
-                <th class="num">Kâr / item</th>
-                <th class="num">Süre</th>
-                <th class="num">Kâr / saat</th>
-                <th class="num" title="Bazaar: son 7 günde sell offer ile satışta anında alınan, anında satışta anında satılan adet. AH: şu anki BIN ilan sayısı.">Talep</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+      <div id="mineBody"></div>
+      <div id="mineGem" hidden>
+        <div class="card calc">
+          <h3>Perfect gemstone forge</h3>
+          <p class="muted small">Flawless gemlerden forgelanan Perfect gemstone'lar. Crystal'lar (Ruby Crystal gibi) satılamadığı için maliyete 0 olarak katılır. Detay ve grafik için satıra tıkla.</p>
+          <div class="table-wrap">
+            <table id="gemForgeTable">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th class="num">Maliyet</th>
+                  <th class="num">Satış (net)</th>
+                  <th class="num">Kâr / item</th>
+                  <th class="num">Süre</th>
+                  <th class="num">Kâr / saat</th>
+                  <th class="num" title="Bazaar: son 7 günde sell offer ile satışta anında alınan, anında satışta anında satılan adet. AH: şu anki BIN ilan sayısı.">Talep</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
+        <div id="gemRank" class="card calc"></div>
       </div>
-      <div id="gemRank" class="card calc"><div class="empty">Fiyatlar yükleniyor…</div></div>
+      <div id="mineTotal" class="card calc"></div>
+      <p class="muted small" id="metalNote"></p>
     </section>
 
     <section id="tab-settings" class="panel">
