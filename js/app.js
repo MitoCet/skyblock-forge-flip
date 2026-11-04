@@ -24,11 +24,19 @@ const DEFAULTS = {
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
   scMarket: 'all', scSort: 'diff', scNpc: true, scOnlyCraft: false, scHideMissing: true,
   scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', gemHold: {}, gemCountLow: false,
-  metalTungsten: 640, metalUmber: 640, metalUnit: 'ench', metalOwnPlates: false,
+  metalOwnPlates: false,
+  mine: null, mineRoute: {}, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
 };
 let S = load();
 // gemHold used to hold one { tier, qty } per gemstone; now it holds an amount per tier.
 for (const [t, h] of Object.entries(S.gemHold || {})) if (h && h.tier) S.gemHold[t] = { [h.tier]: h.qty || 0 };
+// The metal tab had one amount per metal, in raw or Enchanted pieces.
+if (!S.mine) {
+  S.mine = {};
+  for (const [id, k] of [['TUNGSTEN', 'metalTungsten'], ['UMBER', 'metalUmber']]) {
+    if (S[k]) S.mine[id] = { [S.metalUnit === 'raw' ? 'raw' : 'ench']: S[k] };
+  }
+}
 function load() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('forgeflip') || '{}') }; }
   catch { return { ...DEFAULTS }; }
@@ -951,7 +959,6 @@ const GEM_TIERS = [['ROUGH', 'Rough', 1], ['FLAWED', 'Flawed', 80], ['FINE', 'Fi
 const PLAN_TIERS = GEM_TIERS;
 const PLAN_STEP = [80, 80, 80]; // from tier i to tier i + 1
 const TO_TIER = { FLAWED: "Flawed'a", FINE: "Fine'a", FLAWLESS: "Flawless'a" };
-let gemSackMsg = 'Gemstone Sack\'indeki Rough, Flawed, Fine ve Flawless adetlerini profilinden doldurur.';
 function gemPlanTo(t, target) {
   const h = S.gemHold[t] || {};
   const held = PLAN_TIERS.map(([k]) => Math.max(0, Math.floor(Number(h[k]) || 0)));
@@ -1054,7 +1061,7 @@ function gemHoldTotal(types) {
 
 function renderGemRank() {
   const box = $('#gemRank');
-  const types = Object.keys(market.bz).map((id) => id.match(/^ROUGH_([A-Z]+)_GEM$/)?.[1]).filter(Boolean).sort();
+  const types = gemTypes();
   const gemName = (t) => anyName(`ROUGH_${t}_GEM`).replace(/^Rough /, '').replace(/ Gemstone$/, '');
   const rows = types.map((t) => {
     const tiers = GEM_TIERS.map(([k, label, eq]) => {
@@ -1083,14 +1090,12 @@ function renderGemRank() {
     </tbody></table></div>
     <h3>Elimdeki gemstone'lar</h3>
     <label class="check" title="Fine'a craftlanamayacak kadar az kalan Rough ve Flawed gemler varsayılan olarak toplama katılmaz."><input type="checkbox" id="gemCountLow"${S.gemCountLow ? ' checked' : ''}> Fine'a craftlanamayan Rough/Flawed artıklarını da hesaba kat</label>
-    <div class="live"><button id="gemSackBtn" class="primary" type="button">Sack'lerden çek</button><span id="gemSackStatus" class="muted small">${esc(gemSackMsg)}</span></div>
     <p class="muted small">Her tierdan kaç tane olduğunu yaz. Gemler sadece yukarı craftlanır (80 tane = 1 üst tier), üst tier aşağı çevrilemez, o yüzden elindeki üst tierlar en az o tierda satılır. Tam craft'a yetmeyen artanlar bulundukları tierda satılır. "En kârlı" seçeneği gemleri Fine'a kadar ya da Flawless'a kadar craftlayıp satmaktan hangisi daha çok kazandırıyorsa onu kullanır, çünkü Rough ve Flawed fiyatları büyük satışta tutmaz (sıralamada yine görünürler). "Ne yapmalı" sütunundan kendi seçtiğin tieri da hesaplatabilirsin.</p>
     <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${GEM_TIERS.map(([, label]) => `<th>${label}</th>`).join('')}<th>Ne yapmalı</th><th>Sonuç (net)</th></tr></thead><tbody>
     ${types.map(holdRow).join('')}
     </tbody></table></div>
     <div id="gemHoldTotal">${gemHoldTotal(types)}</div>`;
-  $('#gemSackBtn').onclick = fetchSackGems;
-  $('#gemCountLow').onchange = (ev) => { S.gemCountLow = ev.target.checked; save(); renderGemRank(); };
+  $('#gemCountLow').onchange = (ev) => { S.gemCountLow = ev.target.checked; save(); renderGemRank(); renderMineTotal(); };
   box.oninput = (ev) => {
     const { gem, k } = ev.target.dataset;
     if (!gem) return;
@@ -1099,6 +1104,7 @@ function renderGemRank() {
     $(`#gemRes-${gem}`).innerHTML = gemHoldHtml(gem);
     box.querySelector(`select[data-gem="${gem}"] option[value=best]`).textContent = bestOptionText(gem);
     $('#gemHoldTotal').innerHTML = gemHoldTotal(types);
+    renderMineTotal();
   };
 }
 
@@ -1140,50 +1146,24 @@ async function renderSellCraft() {
     + 'Değerler 1 adet craftlanan item için.';
 }
 
-// ---------- Gemstone tab ----------
-// Perfect gemstone forging (from the forge recipes) and the tier ranking / holdings calculator.
-function renderGemForge() {
-  const tbody = $('#gemForgeTable tbody');
-  if (!recipes.length) { tbody.innerHTML = '<tr><td colspan="7" class="muted">Forge tarifleri yükleniyor…</td></tr>'; return; }
-  const list = recipes.filter((r) => isGem(r.id, 'PERFECT')).map(evaluate)
-    .sort((a, b) => (a.perHour == null ? 1 : b.perHour == null ? -1 : b.perHour - a.perHour));
-  tbody.innerHTML = list.map((e) => {
-    const cls = e.profit == null ? '' : e.profit >= 0 ? 'pos' : 'neg';
-    return `<tr data-id="${esc(e.id)}">
-      <td>${esc(e.name)}</td>
-      <td class="num">${coins(e.cost)}</td>
-      <td class="num">${coins(e.sale.net)}</td>
-      <td class="num ${cls}">${coins(e.profit)}</td>
-      <td class="num">${duration(e.time)}</td>
-      <td class="num ${cls}">${coins(e.perHour)}</td>
-      <td class="num">${demandText(e)}</td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="7" class="muted">Perfect gemstone tarifi bulunamadı.</td></tr>';
-}
-
-async function renderGem() {
-  renderGemForge();
-  const box = $('#gemRank');
-  if (!market) {
-    box.innerHTML = '<div class="empty">Fiyatlar yükleniyor…</div>';
-    try { await loadExtra(); } catch (err) {
-      console.error(err);
-      box.innerHTML = '<div class="empty">Bu bölümün verisi henüz yok. Fiyat toplayıcı bir sonraki çalışmasında (15 dakikada bir) oluşturacak.</div>';
-      return;
-    }
-  }
-  renderGemRank();
-}
-
-// ---------- Dwarven metal mining ----------
-// Mined Tungsten / Umber, compared by what the same amount of Enchanted metal
-// becomes: sold as is, forged into keys, or forged to Refined and then to Plates.
-const METALS = [
-  { name: 'Tungsten', setting: 'metalTungsten', raw: 'TUNGSTEN', ench: 'ENCHANTED_TUNGSTEN', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE', key: 'TUNGSTEN_KEY' },
-  { name: 'Umber', setting: 'metalUmber', raw: 'UMBER', ench: 'ENCHANTED_UMBER', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE', key: 'UMBER_KEY' },
+// ---------- Mining profits ----------
+// Every mined material in one tab: amounts come from the sacks (or are typed), each material shows
+// its routes (sell raw / Enchanted, forge into a key, Refined, Plate…), and the bottom adds up the
+// route chosen for every material ticked for the total.
+const MINE = [
+  { id: 'TUNGSTEN', name: 'Tungsten', raw: 'TUNGSTEN', ench: 'ENCHANTED_TUNGSTEN', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE', key: 'TUNGSTEN_KEY' },
+  { id: 'UMBER', name: 'Umber', raw: 'UMBER', ench: 'ENCHANTED_UMBER', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE', key: 'UMBER_KEY' },
+  { id: 'GLACITE', name: 'Glacite', raw: 'GLACITE', ench: 'ENCHANTED_GLACITE', refined: 'GLACITE_AMALGAMATION', refLabel: 'Glacite Amalgamation' },
+  { id: 'MITHRIL', name: 'Mithril', raw: 'MITHRIL_ORE', ench: 'ENCHANTED_MITHRIL', refined: 'REFINED_MITHRIL' },
+  { id: 'TITANIUM', name: 'Titanium', raw: 'TITANIUM_ORE', ench: 'ENCHANTED_TITANIUM', refined: 'REFINED_TITANIUM' },
+  { id: 'HARD_STONE', name: 'Hard Stone', raw: 'HARD_STONE', ench: 'ENCHANTED_HARD_STONE', craftUp: 'CONCENTRATED_STONE' },
+  // Drops that turn into nothing else: only sold as they are.
+  { id: 'REFINED_MINERAL', name: 'Refined Mineral', raw: 'REFINED_MINERAL', simple: true, view: 'OTHER' },
+  { id: 'GLOSSY_GEMSTONE', name: 'Glossy Gemstone', raw: 'GLOSSY_GEMSTONE', simple: true, view: 'OTHER' },
 ];
 const forgeRecipe = (id) => recipes.find((r) => r.id === id);
-// Raw pieces per Enchanted, from the crafting table recipe (160 today).
+const fmtAmt = (n, d = 0) => n.toLocaleString('tr-TR', { maximumFractionDigits: d });
+// Raw pieces per Enchanted, from the crafting table recipe (160 for most).
 function enchRatio(m) {
   const c = craftsBy.get(m.ench)?.find((x) => x.inputs.length === 1 && x.inputs[0].id === m.raw);
   return c ? c.inputs[0].count / c.count : 160;
@@ -1216,6 +1196,7 @@ function metalRoute(m, label, product, n, extraCost, leftover, stages, missing) 
   };
 }
 
+// Routes for `enchAmount` whole Enchanted pieces (raw left over is added by the caller).
 function metalRoutes(m, enchAmount) {
   const ratio = enchRatio(m);
   const rows = [];
@@ -1223,24 +1204,33 @@ function metalRoutes(m, enchAmount) {
   if (raw.net != null) rows.push(metalRoute(m, 'Ham olarak sat', m.raw, enchAmount * ratio, 0, 0, [], false));
   rows.push(metalRoute(m, 'Enchanted olarak sat', m.ench, enchAmount, 0, 0, [], false));
 
-  const keyR = forgeRecipe(m.key);
+  const keyR = m.key && forgeRecipe(m.key);
   if (keyR) {
     const per = keyR.inputs.find((i) => i.id === m.ench)?.count;
     const n = per ? Math.floor(enchAmount / per) : 0;
     const ex = extras(keyR, m.ench);
     const cost = ex.some((e) => e.total == null) ? null : ex.reduce((t, e) => t + e.total, 0) * n;
-    rows.push({ ...metalRoute(m, 'Anahtar', m.key, n, cost, enchAmount - n * per, [[n, keyR.duration]], !per), extras: ex, per });
+    rows.push({ ...metalRoute(m, 'Anahtar', m.key, n, cost, enchAmount - n * (per || 0), [[n, keyR.duration]], !per), extras: ex, per });
   }
 
-  const refR = forgeRecipe(m.refined);
+  // A crafting table step (no forge time), e.g. Enchanted Hard Stone → Concentrated Stone.
+  const upC = m.craftUp && craftsBy.get(m.craftUp)?.find((x) => x.inputs.length === 1 && x.inputs[0].id === m.ench);
+  if (upC) {
+    const per = upC.inputs[0].count / upC.count;
+    const n = Math.floor(enchAmount / per);
+    rows.push({ ...metalRoute(m, `${anyName(m.craftUp)} craftla`, m.craftUp, n, 0, enchAmount - n * per, [], false), per });
+  }
+
+  const refLabel = m.refLabel || 'Refined';
+  const refR = m.refined && forgeRecipe(m.refined);
   const refPer = refR?.inputs.find((i) => i.id === m.ench)?.count;
   if (refR && refPer) {
     const n = Math.floor(enchAmount / refPer);
     const ex = extras(refR, m.ench);
     const cost = ex.some((e) => e.total == null) ? null : ex.reduce((t, e) => t + e.total, 0) * n;
-    rows.push({ ...metalRoute(m, 'Refined', m.refined, n, cost, enchAmount - n * refPer, [[n, refR.duration]], false), extras: ex, per: refPer });
+    rows.push({ ...metalRoute(m, refLabel, m.refined, n, cost, enchAmount - n * refPer, [[n, refR.duration]], false), extras: ex, per: refPer });
 
-    const plateR = forgeRecipe(m.plate);
+    const plateR = m.plate && forgeRecipe(m.plate);
     const perPlate = plateR?.inputs.find((i) => i.id === m.refined)?.count;
     if (plateR && perPlate) {
       const p = Math.floor(enchAmount / (refPer * perPlate));
@@ -1248,7 +1238,7 @@ function metalRoutes(m, enchAmount) {
       const one = ex2.some((e) => e.total == null) || cost == null ? null : ex2.reduce((t, e) => t + e.total, 0);
       const refCost = ex.reduce((t, e) => t + (e.total ?? 0), 0) * perPlate;
       rows.push({
-        ...metalRoute(m, 'Refined → Plate', m.plate, p, one == null ? null : (one + refCost) * p,
+        ...metalRoute(m, `${refLabel} → Plate`, m.plate, p, one == null ? null : (one + refCost) * p,
           enchAmount - p * refPer * perPlate, [[p * perPlate, refR.duration], [p, plateR.duration]], false),
         extras: ex2, per: refPer * perPlate,
       });
@@ -1257,8 +1247,152 @@ function metalRoutes(m, enchAmount) {
   return rows;
 }
 
-async function renderMetal() {
-  const body = $('#metalBody');
+// Amounts held of one material: { raw, ench } as typed or pulled from the sacks.
+const mineHold = (m) => ({ raw: Math.max(0, Number(S.mine[m.id]?.raw) || 0), ench: Math.max(0, Number(S.mine[m.id]?.ench) || 0) });
+
+// All routes of one material with what is held, the best one and the chosen one.
+function mineCalc(m) {
+  const { raw, ench } = mineHold(m);
+  if (m.simple) {
+    const r = metalRoute(m, 'Olduğu gibi sat', m.raw, raw, 0, 0, [], false);
+    return { raw, ench: 0, whole: 0, rawLeft: 0, rows: [r], best: r, chosen: r, has: raw > 0 };
+  }
+  const ratio = enchRatio(m);
+  const whole = ench + Math.floor(raw / ratio);
+  const rawLeft = raw - Math.floor(raw / ratio) * ratio;
+  const rawSale = marketSell(m.raw).net;
+  // Raw that doesn't make a full Enchanted is sold raw on every route.
+  const rawLeftNet = rawLeft > 0 ? (rawSale == null ? null : rawSale * rawLeft) : 0;
+  const rows = metalRoutes(m, whole).map((r) => {
+    if (r.product === m.raw) return { ...r, n: r.n + rawLeft, total: r.total == null || rawSale == null ? r.total : r.total + rawSale * rawLeft };
+    return { ...r, total: r.total == null || rawLeftNet == null ? null : r.total + rawLeftNet };
+  });
+  const best = rows.reduce((b, r) => (r.total != null && (r.n > 0 || r.product === m.ench) && (!b || r.total > b.total) ? r : b), null);
+  const chosen = rows.find((r) => r.label === S.mineRoute[m.id]) || best;
+  return { raw, ench, whole, rawLeft, rows, best, chosen, has: raw > 0 || ench > 0 };
+}
+
+const inTotal = (id) => S.mineInTotal[id] !== false;
+
+function mineSection(m) {
+  const { slots } = effective();
+  const c = mineCalc(m);
+  const base = c.rows.find((r) => r.product === m.ench)?.total;
+  const tr = c.rows.map((r) => {
+    const diff = r.total != null && base != null ? r.total - base : null;
+    const perHour = diff != null && r.slotSec > 0 ? diff / (r.slotSec / 3600) : null;
+    const dcls = diff == null || Math.abs(diff) < 0.5 ? '' : diff > 0 ? 'pos' : 'neg';
+    const ex = (r.extras || []).filter((e) => e.count > 0)
+      .map((e) => `${e.count}× ${esc(anyName(e.id))} (${coins(e.unit)})`).join(', ');
+    const what = `${fmtAmt(r.n)}× ${esc(anyName(r.product))}`
+      + (r.per ? ` <span class="muted small">(${r.per} Enchanted/adet)</span>` : '')
+      + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${fmtAmt(r.leftover, 1)} Enchanted artar, olduğu gibi satılır</span>` : '')
+      + (c.rawLeft > 0 && r.product !== m.raw ? `<br><span class="muted small">+ ${fmtAmt(c.rawLeft)} ham artar, ham satılır</span>` : '');
+    const ench = m.simple ? 0 : c.whole + c.rawLeft / enchRatio(m);
+    return `<tr>
+      <td class="nowrap"><label class="check"><input type="radio" name="route-${m.id}" data-route="${m.id}" value="${esc(r.label)}"${r === c.chosen ? ' checked' : ''}> ${esc(r.label)}</label>${r === c.best ? ' <span class="tag pos">En kârlı</span>' : ''}</td>
+      <td>${what}${ex ? `<br><span class="muted small">Ek: ${ex}</span>` : ''}</td>
+      <td class="num">${r.extraCost ? coins(r.extraCost) : '—'}</td>
+      <td class="num">${coins(r.gross)}</td>
+      <td class="num${r === c.best ? ' best' : ''}">${coins(r.total)}</td>
+      <td class="num">${ench > 0 && r.total != null ? coins(r.total / ench) : '—'}</td>
+      <td class="num ${dcls}">${r.product === m.ench ? '—' : coins(diff)}</td>
+      <td class="num">${r.slotSec ? duration(r.wallSec) : '—'}</td>
+      <td class="num ${dcls}">${coins(perHour)}</td>
+      <td class="num">${r.demand == null ? '—' : `${coins(r.demand)}/hf`}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="card calc">
+    <h3>${m.name}</h3>
+    <div class="controls">
+      <label>${m.simple ? 'Adet' : `Ham ${esc(anyName(m.raw))}`} <input type="number" min="0" step="1" data-mine="${m.id}" data-k="raw" value="${c.raw || ''}" placeholder="0"></label>
+      ${m.simple ? '' : `<label>${esc(anyName(m.ench))} <input type="number" min="0" step="1" data-mine="${m.id}" data-k="ench" value="${c.ench || ''}" placeholder="0"></label>`}
+      <label class="check"><input type="checkbox" data-mine-total="${m.id}"${inTotal(m.id) ? ' checked' : ''}> Toplama kat</label>
+      ${m.simple ? '<span class="muted small">Forge ya da craft tarifi yok, olduğu gibi satılır.</span>' : `<span class="muted small">Toplam ${fmtAmt(c.whole + c.rawLeft / enchRatio(m), 1)} Enchanted değerinde (${fmtAmt(enchRatio(m))} ham = 1 Enchanted)</span>`}
+    </div>
+    ${c.has ? `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>Yol</th><th>Ne çıkar</th>
+        <th class="num" title="Satın alınan ek malzemelerin toplamı.">Ek maliyet</th>
+        <th class="num" title="Çıkan itemlerin seçili satış yöntemiyle, vergi düşülmüş toplamı.">Satış (net)</th>
+        <th class="num" title="Satış − ek maliyet + artanların satışı. Hepsi aynı miktardan.">Toplam kazanç</th>
+        <th class="num">Enchanted başına</th>
+        <th class="num" title="Enchanted olarak satmaya göre fazladan kazanç.">Enchanted satışına göre</th>
+        <th class="num" title="Seçili slot sayınla ve Quick Forge indirimiyle tüm forgeların bitme süresi.">Forge süresi (${slots} slot)</th>
+        <th class="num" title="Fazladan kazanç ÷ harcanan forge slot-saati.">Fark / slot-saat</th>
+        <th class="num" title="Son 7 günde seçili satış yönteminin Bazaar hacmi.">Hacim (7g)</th>
+      </tr></thead>
+      <tbody>${tr}</tbody>
+    </table></div>
+    <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı).</p>`
+    : '<p class="muted small">Adet yaz ya da yukarıdan "Sack\'lerden çek".</p>'}
+    ${m.id === 'UMBER' || (m.id === 'TUNGSTEN' && S.mineView === 'TUNGSTEN') ? perfectSection() : ''}
+  </div>`;
+}
+
+// Gemstone types on the Bazaar, and the totals of what is held.
+const gemTypes = () => Object.keys(market.bz).map((id) => id.match(/^ROUGH_([A-Z]+)_GEM$/)?.[1]).filter(Boolean).sort();
+function gemTotals() {
+  const types = gemTypes();
+  const chosen = types.map((t) => gemPlan(t, S.gemHold[t]?.target || 'best')).filter(Boolean);
+  const best = types.map((t) => gemPlan(t, 'best')).filter(Boolean);
+  return { chosen: chosen.reduce((a, p) => a + p.total, 0), best: best.reduce((a, p) => a + p.total, 0), has: chosen.length > 0 };
+}
+
+function renderMineTotal() {
+  const box = $('#mineTotal');
+  const lines = MINE.map((m) => {
+    const c = mineCalc(m);
+    if (!c.has) return null;
+    return { id: m.id, name: m.name, what: c.chosen ? `${c.chosen.label}${c.chosen.n ? `: ${fmtAmt(c.chosen.n)}× ${anyName(c.chosen.product)}` : ''}` : '—',
+      total: c.chosen?.total ?? null, best: c.best?.total ?? null, time: c.chosen?.wallSec || 0 };
+  }).filter(Boolean);
+  const g = gemTotals();
+  if (g.has) lines.push({ id: 'GEM', name: 'Gemstone', what: 'Elimdeki gemstone\'lar tablosunda seçtiğin tierlar', total: g.chosen, best: g.best, time: 0 });
+  if (!lines.length) { box.innerHTML = '<h3>Toplam</h3><p class="muted small">Henüz adet yok. "Sack\'lerden çek" ile ya da bölümlere adet yazarak doldur.</p>'; return; }
+  const used = lines.filter((l) => inTotal(l.id));
+  const sum = (k) => used.reduce((a, l) => a + (l[k] ?? 0), 0);
+  const missing = used.some((l) => l.total == null);
+  const st = (k, v, cls = '') => `<div class="stat"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
+  box.innerHTML = `<h3>Seçtiklerimin toplamı</h3>
+    <div class="table-wrap"><table><thead><tr><th>Toplama kat</th><th>Malzeme</th><th>Seçilen yol</th><th class="num">Kazanç (net)</th><th class="num" title="Bu malzemenin en kârlı yolundan farkı.">En kârlıya göre</th></tr></thead><tbody>
+    ${lines.map((l) => {
+      const d = l.total != null && l.best != null ? l.total - l.best : null;
+      return `<tr${inTotal(l.id) ? '' : ' class="dim"'}><td><input type="checkbox" data-mine-total="${l.id}"${inTotal(l.id) ? ' checked' : ''} aria-label="${esc(l.name)} toplama kat"></td>
+      <td>${esc(l.name)}</td><td class="small">${esc(l.what)}</td><td class="num">${coins(l.total)}</td>
+      <td class="num ${d != null && d < -0.5 ? 'neg' : ''}">${d == null || Math.abs(d) < 0.5 ? '—' : coins(d)}</td></tr>`;
+    }).join('')}
+    </tbody></table></div>
+    <div class="stats" style="margin-top:12px">
+      ${st('Seçtiğin yollarla toplam', coins(sum('total')), 'pos')}
+      ${st('Hepsi en kârlı yolla olsaydı', coins(sum('best')))}
+      ${st('En uzun forge süresi', duration(Math.max(0, ...used.map((l) => l.time))) || '—')}
+    </div>
+    ${missing ? '<p class="small warn">Bazı yolların fiyatı eksik, toplamda 0 sayıldı.</p>' : ''}
+    <p class="muted small">Forge süreleri her malzeme için ayrı hesaplandı; hepsini aynı anda forgelarsan slotlar paylaşılacağı için daha uzun sürer.</p>`;
+}
+
+function renderGemForge() {
+  const tbody = $('#gemForgeTable tbody');
+  if (!recipes.length) { tbody.innerHTML = '<tr><td colspan="7" class="muted">Forge tarifleri yükleniyor…</td></tr>'; return; }
+  const list = recipes.filter((r) => isGem(r.id, 'PERFECT')).map(evaluate)
+    .sort((a, b) => (a.perHour == null ? 1 : b.perHour == null ? -1 : b.perHour - a.perHour));
+  tbody.innerHTML = list.map((e) => {
+    const cls = e.profit == null ? '' : e.profit >= 0 ? 'pos' : 'neg';
+    return `<tr data-id="${esc(e.id)}">
+      <td>${esc(e.name)}</td>
+      <td class="num">${coins(e.cost)}</td>
+      <td class="num">${coins(e.sale.net)}</td>
+      <td class="num ${cls}">${coins(e.profit)}</td>
+      <td class="num">${duration(e.time)}</td>
+      <td class="num ${cls}">${coins(e.perHour)}</td>
+      <td class="num">${demandText(e)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted">Perfect gemstone tarifi bulunamadı.</td></tr>';
+}
+
+async function renderMine() {
+  const body = $('#mineBody');
   if (!recipes.length) { body.innerHTML = '<div class="empty">Forge tarifleri yükleniyor…</div>'; return; }
   if (!market) {
     body.innerHTML = '<div class="empty">Fiyatlar yükleniyor…</div>';
@@ -1268,54 +1402,14 @@ async function renderMetal() {
       return;
     }
   }
-  const { slots } = effective();
-  body.innerHTML = METALS.map((m) => {
-    const amount = Math.max(0, Number(S[m.setting]) || 0);
-    const ench = S.metalUnit === 'raw' ? amount / enchRatio(m) : amount;
-    const rows = metalRoutes(m, ench);
-    const base = rows.find((r) => r.product === m.ench)?.total;
-    const best = rows.reduce((b, r) => (r.total != null && r.n > 0 && (!b || r.total > b.total) ? r : b), null);
-    const tr = rows.map((r) => {
-      const diff = r.total != null && base != null ? r.total - base : null;
-      const perHour = diff != null && r.slotSec > 0 ? diff / (r.slotSec / 3600) : null;
-      const dcls = diff == null || Math.abs(diff) < 0.5 ? '' : diff > 0 ? 'pos' : 'neg';
-      const ex = (r.extras || []).filter((e) => e.count > 0)
-        .map((e) => `${e.count}× ${esc(anyName(e.id))} (${coins(e.unit)})`).join(', ');
-      const what = `${r.n.toLocaleString('tr-TR', { maximumFractionDigits: 0 })}× ${esc(anyName(r.product))}`
-        + (r.per ? ` <span class="muted small">(${r.per} Enchanted/adet)</span>` : '')
-        + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${r.leftover.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Enchanted artar, olduğu gibi satılır</span>` : '');
-      return `<tr>
-        <td>${esc(r.label)}${r === best ? ' <span class="tag pos">En kârlı</span>' : ''}</td>
-        <td>${what}${ex ? `<br><span class="muted small">Ek: ${ex}</span>` : ''}</td>
-        <td class="num">${r.extraCost ? coins(r.extraCost) : '—'}</td>
-        <td class="num">${coins(r.gross)}</td>
-        <td class="num${r === best ? ' best' : ''}">${coins(r.total)}</td>
-        <td class="num">${ench > 0 && r.total != null ? coins(r.total / ench) : '—'}</td>
-        <td class="num ${dcls}">${r.product === m.ench ? '—' : coins(diff)}</td>
-        <td class="num">${r.slotSec ? duration(r.wallSec) : '—'}</td>
-        <td class="num ${dcls}">${coins(perHour)}</td>
-        <td class="num">${r.demand == null ? '—' : `${coins(r.demand)}/hf`}</td>
-      </tr>`;
-    }).join('');
-    const raw = S.metalUnit === 'raw' ? amount : amount * enchRatio(m);
-    return `<h3>${m.name} <span class="muted small">${ench.toLocaleString('tr-TR', { maximumFractionDigits: 1 })} Enchanted · ${raw.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ham</span></h3>
-      <div class="table-wrap"><table>
-        <thead><tr>
-          <th>Yol</th><th>Ne çıkar</th>
-          <th class="num" title="Satın alınan ek malzemelerin (Bejeweled Handle, Glacite Amalgamation) toplamı.">Ek maliyet</th>
-          <th class="num" title="Çıkan itemlerin seçili satış yöntemiyle, vergi düşülmüş toplamı.">Satış (net)</th>
-          <th class="num" title="Satış − ek maliyet + artan Enchanted'ın satışı. Hepsi aynı miktar metalden.">Toplam kazanç</th>
-          <th class="num">Enchanted başına</th>
-          <th class="num" title="Enchanted olarak satmaya göre fazladan kazanç.">Enchanted satışına göre</th>
-          <th class="num" title="Seçili slot sayınla ve Quick Forge indirimiyle tüm forgeların bitme süresi.">Forge süresi (${slots} slot)</th>
-          <th class="num" title="Fazladan kazanç ÷ harcanan forge slot-saati.">Fark / slot-saat</th>
-          <th class="num" title="Son 7 günde seçili satış yönteminin Bazaar hacmi.">Hacim (7g)</th>
-        </tr></thead>
-        <tbody>${tr}</tbody>
-      </table></div>`;
-  }).join('') + perfectSection();
-  $('#metalNote').textContent = `Tarifler NotEnoughUpdates verisinden: anahtar ve Refined doğrudan Enchanted metalden, Plate ise Refined + Glacite Amalgamation ile forgelanır. `
-    + `Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). Bir sonraki ürüne yetmeyen metal Enchanted olarak satılmış sayılır. `
+  const view = S.mineView;
+  body.innerHTML = MINE.filter((m) => view === 'all' || view === (m.view || m.id)).map(mineSection).join('');
+  const gem = view === 'all' || view === 'GEM';
+  $('#mineGem').hidden = !gem;
+  if (gem) { renderGemForge(); renderGemRank(); }
+  renderMineTotal();
+  $('#metalNote').textContent = 'Tarifler NotEnoughUpdates verisinden: anahtar, Refined ve Glacite Amalgamation doğrudan Enchanted malzemeden, Plate ise Refined + Glacite Amalgamation ile forgelanır. Ek malzemeler (Bejeweled Handle, Glacite Amalgamation, Fine gemler…) satın alınmış sayılır. '
+    + `Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). Bir sonraki ürüne yetmeyen miktar Enchanted (ya da ham) olarak satılmış sayılır. `
     + 'Plate süresine önce Refined forgeları, sonra Plate forgeları dahildir.';
 }
 
@@ -1422,9 +1516,9 @@ async function getProfiles() {
   return body;
 }
 
-// Fills the gemstone holdings table from the gemstones in the player's sacks.
-async function fetchSackGems() {
-  const btn = $('#gemSackBtn'), status = $('#gemSackStatus');
+// Fills the mined amounts and the gemstone holdings from the player's sacks.
+async function fetchSacks() {
+  const btn = $('#mineSackBtn'), status = $('#mineSackStatus');
   if (!S.username || !S.apiKey) { status.textContent = 'Önce "Profil ve ayarlar" sekmesine kullanıcı adını ve API anahtarını gir.'; return; }
   btn.disabled = true; status.textContent = 'Sack\'ler çekiliyor…';
   try {
@@ -1434,21 +1528,26 @@ async function fetchSackGems() {
     const sacks = member?.inventory?.sacks_counts ?? member?.sacks_counts;
     if (!sacks) throw new Error('Sack bilgisi gelmedi. Oyunda SkyBlock Menu → Settings → API Settings\'ten Inventory API\'yi aç, birkaç dakika sonra tekrar dene.');
     const hold = {};
-    let total = 0;
+    let gems = 0;
     for (const [id, n] of Object.entries(sacks)) {
       const m = id.match(/^(ROUGH|FLAWED|FINE|FLAWLESS)_([A-Z]+)_GEM$/);
       if (!m || !(n > 0)) continue;
       (hold[m[2]] ||= {})[m[1]] = n;
-      total += n;
+      gems += n;
     }
     // Keep each gem's chosen target; replace the amounts.
     for (const t of new Set([...Object.keys(S.gemHold), ...Object.keys(hold)])) {
       S.gemHold[t] = { target: S.gemHold[t]?.target, ...hold[t] };
     }
+    const got = [];
+    for (const m of MINE) {
+      const raw = sacks[m.raw] || 0, ench = m.ench ? sacks[m.ench] || 0 : 0;
+      S.mine[m.id] = { raw, ench };
+      if (raw || ench) got.push(m.name);
+    }
     save();
-    gemSackMsg = `${p.cute_name} profilinin sack'lerinden ${total.toLocaleString('tr-TR')} gemstone alındı (${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}).`;
-    renderGemRank();
-    return;
+    status.textContent = `${p.cute_name} profilinin sack'lerinden alındı: ${[...got, gems ? `${gems.toLocaleString('tr-TR')} gemstone` : null].filter(Boolean).join(', ') || 'hiçbir şey bulunamadı'} (${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}).`;
+    renderMine();
   } catch (err) {
     status.textContent = err instanceof TypeError ? 'Hypixel\'e bağlanılamadı. İnternet bağlantını kontrol edip tekrar dene.' : err.message;
   } finally {
@@ -1551,8 +1650,7 @@ function refreshAll() {
   if ($('#tab-npc').classList.contains('active')) renderNpc();
   if ($('#tab-craft').classList.contains('active')) renderCraft();
   if ($('#tab-sellcraft').classList.contains('active')) renderSellCraft();
-  if ($('#tab-metal').classList.contains('active')) renderMetal();
-  if ($('#tab-gem').classList.contains('active')) renderGem();
+  if ($('#tab-mine').classList.contains('active')) renderMine();
 }
 
 function wire() {
@@ -1563,8 +1661,7 @@ function wire() {
     if (t.dataset.tab === 'npc') renderNpc();
     if (t.dataset.tab === 'craft') renderCraft();
     if (t.dataset.tab === 'sellcraft') renderSellCraft();
-    if (t.dataset.tab === 'metal') renderMetal();
-    if (t.dataset.tab === 'gem') renderGem();
+    if (t.dataset.tab === 'mine') renderMine();
   }));
   // Controls bound to a setting; the same setting (e.g. buy mode) can appear on several tabs.
   const bound = document.querySelectorAll('[data-setting]');
@@ -1619,6 +1716,15 @@ function wire() {
       return;
     }
     openDetail(id);
+  });
+  $('#mineSackBtn').addEventListener('click', fetchSacks);
+  $('#tab-mine').addEventListener('change', (ev) => {
+    const el = ev.target, d = el.dataset;
+    if (d.mine) S.mine[d.mine] = { ...S.mine[d.mine], [d.k]: Math.max(0, Math.floor(Number(el.value) || 0)) };
+    else if (d.route) S.mineRoute[d.route] = el.value;
+    else if (d.mineTotal) S.mineInTotal[d.mineTotal] = el.checked;
+    else return;
+    save(); renderMine();
   });
   $('#gemForgeTable tbody').addEventListener('click', (ev) => {
     const tr = ev.target.closest('tr[data-id]');
