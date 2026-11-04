@@ -1151,12 +1151,14 @@ async function renderSellCraft() {
 // its routes (sell raw / Enchanted, forge into a key, Refined, Plate…), and the bottom adds up the
 // route chosen for every material ticked for the total.
 const MINE = [
-  { id: 'TUNGSTEN', name: 'Tungsten', raw: 'TUNGSTEN', ench: 'ENCHANTED_TUNGSTEN', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE', key: 'TUNGSTEN_KEY' },
-  { id: 'UMBER', name: 'Umber', raw: 'UMBER', ench: 'ENCHANTED_UMBER', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE', key: 'UMBER_KEY' },
+  // noSell: selling raw or Enchanted isn't realistic in bulk, so only the forge/craft routes are
+  // offered, and what is left over after the last full forge stays with you (counted as 0).
+  { id: 'TUNGSTEN', noSell: true, name: 'Tungsten', raw: 'TUNGSTEN', ench: 'ENCHANTED_TUNGSTEN', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE', key: 'TUNGSTEN_KEY' },
+  { id: 'UMBER', noSell: true, name: 'Umber', raw: 'UMBER', ench: 'ENCHANTED_UMBER', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE', key: 'UMBER_KEY' },
   { id: 'GLACITE', name: 'Glacite', raw: 'GLACITE', ench: 'ENCHANTED_GLACITE', refined: 'GLACITE_AMALGAMATION', refLabel: 'Glacite Amalgamation' },
   { id: 'MITHRIL', name: 'Mithril', raw: 'MITHRIL_ORE', ench: 'ENCHANTED_MITHRIL', refined: 'REFINED_MITHRIL' },
   { id: 'TITANIUM', name: 'Titanium', raw: 'TITANIUM_ORE', ench: 'ENCHANTED_TITANIUM', refined: 'REFINED_TITANIUM' },
-  { id: 'HARD_STONE', name: 'Hard Stone', raw: 'HARD_STONE', ench: 'ENCHANTED_HARD_STONE', craftUp: 'CONCENTRATED_STONE' },
+  { id: 'HARD_STONE', noSell: true, name: 'Hard Stone', raw: 'HARD_STONE', ench: 'ENCHANTED_HARD_STONE', craftUp: 'CONCENTRATED_STONE' },
   // Drops that turn into nothing else: only sold as they are.
   { id: 'REFINED_MINERAL', name: 'Refined Mineral', raw: 'REFINED_MINERAL', simple: true, view: 'OTHER' },
   { id: 'GLOSSY_GEMSTONE', name: 'Glossy Gemstone', raw: 'GLOSSY_GEMSTONE', simple: true, view: 'OTHER' },
@@ -1184,7 +1186,7 @@ function metalRoute(m, label, product, n, extraCost, leftover, stages, missing) 
   const k = 1 - qfPercent(qfLevel) / 100;
   const sale = marketSell(product);
   const enchSale = marketSell(m.ench);
-  const leftoverNet = leftover > 0 ? (enchSale.net == null ? null : enchSale.net * leftover) : 0;
+  const leftoverNet = leftover > 0 && !m.noSell ? (enchSale.net == null ? null : enchSale.net * leftover) : 0;
   const ok = !missing && sale.net != null && extraCost != null && leftoverNet != null;
   const slotSec = stages.reduce((t, [jobs, sec]) => t + jobs * sec * k, 0);
   const wallSec = stages.reduce((t, [jobs, sec]) => t + Math.ceil(jobs / slots) * sec * k, 0);
@@ -1201,8 +1203,10 @@ function metalRoutes(m, enchAmount) {
   const ratio = enchRatio(m);
   const rows = [];
   const raw = marketSell(m.raw);
-  if (raw.net != null) rows.push(metalRoute(m, 'Ham olarak sat', m.raw, enchAmount * ratio, 0, 0, [], false));
-  rows.push(metalRoute(m, 'Enchanted olarak sat', m.ench, enchAmount, 0, 0, [], false));
+  if (!m.noSell) {
+    if (raw.net != null) rows.push(metalRoute(m, 'Ham olarak sat', m.raw, enchAmount * ratio, 0, 0, [], false));
+    rows.push(metalRoute(m, 'Enchanted olarak sat', m.ench, enchAmount, 0, 0, [], false));
+  }
 
   const keyR = m.key && forgeRecipe(m.key);
   if (keyR) {
@@ -1262,7 +1266,7 @@ function mineCalc(m) {
   const rawLeft = raw - Math.floor(raw / ratio) * ratio;
   const rawSale = marketSell(m.raw).net;
   // Raw that doesn't make a full Enchanted is sold raw on every route.
-  const rawLeftNet = rawLeft > 0 ? (rawSale == null ? null : rawSale * rawLeft) : 0;
+  const rawLeftNet = rawLeft > 0 && !m.noSell ? (rawSale == null ? null : rawSale * rawLeft) : 0;
   const rows = metalRoutes(m, whole).map((r) => {
     if (r.product === m.raw) return { ...r, n: r.n + rawLeft, total: r.total == null || rawSale == null ? r.total : r.total + rawSale * rawLeft };
     return { ...r, total: r.total == null || rawLeftNet == null ? null : r.total + rawLeftNet };
@@ -1277,17 +1281,20 @@ const inTotal = (id) => S.mineInTotal[id] !== false;
 function mineSection(m) {
   const { slots } = effective();
   const c = mineCalc(m);
-  const base = c.rows.find((r) => r.product === m.ench)?.total;
+  // Compared with selling Enchanted, or with the best route when selling isn't an option.
+  const base = m.noSell ? c.best?.total : c.rows.find((r) => r.product === m.ench)?.total;
   const tr = c.rows.map((r) => {
     const diff = r.total != null && base != null ? r.total - base : null;
-    const perHour = diff != null && r.slotSec > 0 ? diff / (r.slotSec / 3600) : null;
+    const perHour = m.noSell ? (r.total != null && r.slotSec > 0 ? r.total / (r.slotSec / 3600) : null)
+      : diff != null && r.slotSec > 0 ? diff / (r.slotSec / 3600) : null;
+    const hcls = m.noSell ? '' : null;
     const dcls = diff == null || Math.abs(diff) < 0.5 ? '' : diff > 0 ? 'pos' : 'neg';
     const ex = (r.extras || []).filter((e) => e.count > 0)
       .map((e) => `${e.count}× ${esc(anyName(e.id))} (${coins(e.unit)})`).join(', ');
     const what = `${fmtAmt(r.n)}× ${esc(anyName(r.product))}`
       + (r.per ? ` <span class="muted small">(${r.per} Enchanted/adet)</span>` : '')
-      + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${fmtAmt(r.leftover, 1)} Enchanted artar, olduğu gibi satılır</span>` : '')
-      + (c.rawLeft > 0 && r.product !== m.raw ? `<br><span class="muted small">+ ${fmtAmt(c.rawLeft)} ham artar, ham satılır</span>` : '');
+      + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${fmtAmt(r.leftover, 1)} Enchanted artar, ${m.noSell ? 'sende kalır' : 'olduğu gibi satılır'}</span>` : '')
+      + (c.rawLeft > 0 && r.product !== m.raw ? `<br><span class="muted small">+ ${fmtAmt(c.rawLeft)} ham artar, ${m.noSell ? 'sende kalır' : 'ham satılır'}</span>` : '');
     const ench = m.simple ? 0 : c.whole + c.rawLeft / enchRatio(m);
     return `<tr>
       <td class="nowrap"><label class="check"><input type="radio" name="route-${m.id}" data-route="${m.id}" value="${esc(r.label)}"${r === c.chosen ? ' checked' : ''}> ${esc(r.label)}</label>${r === c.best ? ' <span class="tag pos">En kârlı</span>' : ''}</td>
@@ -1296,9 +1303,9 @@ function mineSection(m) {
       <td class="num">${coins(r.gross)}</td>
       <td class="num${r === c.best ? ' best' : ''}">${coins(r.total)}</td>
       <td class="num">${ench > 0 && r.total != null ? coins(r.total / ench) : '—'}</td>
-      <td class="num ${dcls}">${r.product === m.ench ? '—' : coins(diff)}</td>
+      <td class="num ${dcls}">${r.product === m.ench || (m.noSell && r === c.best) ? '—' : coins(diff)}</td>
       <td class="num">${r.slotSec ? duration(r.wallSec) : '—'}</td>
-      <td class="num ${dcls}">${coins(perHour)}</td>
+      <td class="num ${hcls ?? dcls}">${coins(perHour)}</td>
       <td class="num">${r.demand == null ? '—' : `${coins(r.demand)}/hf`}</td>
     </tr>`;
   }).join('');
@@ -1317,14 +1324,16 @@ function mineSection(m) {
         <th class="num" title="Çıkan itemlerin seçili satış yöntemiyle, vergi düşülmüş toplamı.">Satış (net)</th>
         <th class="num" title="Satış − ek maliyet + artanların satışı. Hepsi aynı miktardan.">Toplam kazanç</th>
         <th class="num">Enchanted başına</th>
-        <th class="num" title="Enchanted olarak satmaya göre fazladan kazanç.">Enchanted satışına göre</th>
+        ${m.noSell ? '<th class="num" title="Bu malzemenin en kârlı yoluna göre fark.">En kârlıya göre</th>'
+          : '<th class="num" title="Enchanted olarak satmaya göre fazladan kazanç.">Enchanted satışına göre</th>'}
         <th class="num" title="Seçili slot sayınla ve Quick Forge indirimiyle tüm forgeların bitme süresi.">Forge süresi (${slots} slot)</th>
-        <th class="num" title="Fazladan kazanç ÷ harcanan forge slot-saati.">Fark / slot-saat</th>
+        ${m.noSell ? '<th class="num" title="Toplam kazanç ÷ harcanan forge slot-saati.">Kazanç / slot-saat</th>'
+          : '<th class="num" title="Fazladan kazanç ÷ harcanan forge slot-saati.">Fark / slot-saat</th>'}
         <th class="num" title="Son 7 günde seçili satış yönteminin Bazaar hacmi.">Hacim (7g)</th>
       </tr></thead>
       <tbody>${tr}</tbody>
     </table></div>
-    <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı).</p>`
+    <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı).${m.noSell ? ' Ham ya da Enchanted satış büyük miktarda gerçekçi olmadığı için seçenek değil; son forge\'a yetmeyen kısım sende kalır ve toplama katılmaz.' : ''}</p>`
     : '<p class="muted small">Adet yaz ya da yukarıdan "Sack\'lerden çek".</p>'}
     ${m.id === 'UMBER' || (m.id === 'TUNGSTEN' && S.mineView === 'TUNGSTEN') ? perfectSection() : ''}
   </div>`;
