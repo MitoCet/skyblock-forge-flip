@@ -49,4 +49,11 @@ jobs:
           git checkout -q --orphan snapshot
           git add -A
           git commit -q -m "Price snapshot $(date -u +%FT%TZ)"
+          # GitHub sometimes answers a push with "Internal Server Error".
+          # Retry a few times so one bad answer does not cost a snapshot.
+          for wait in 5 15 30 60; do
+            git push -f origin HEAD:refs/heads/data && exit 0
+            echo "Push failed, retrying in ${wait}s"
+            sleep "$wait"
+          done
           git push -f origin HEAD:refs/heads/data
