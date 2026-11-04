@@ -1162,6 +1162,7 @@ const MINE = [
   // Drops that turn into nothing else: only sold as they are.
   { id: 'REFINED_MINERAL', name: 'Refined Mineral', raw: 'REFINED_MINERAL', simple: true, view: 'OTHER' },
   { id: 'GLOSSY_GEMSTONE', name: 'Glossy Gemstone', raw: 'GLOSSY_GEMSTONE', simple: true, view: 'OTHER' },
+  { id: 'SUSPICIOUS_SCRAP', name: 'Suspicious Scrap', raw: 'SUSPICIOUS_SCRAP', simple: true, view: 'OTHER' },
 ];
 const forgeRecipe = (id) => recipes.find((r) => r.id === id);
 const fmtAmt = (n, d = 0) => n.toLocaleString('tr-TR', { maximumFractionDigits: d });
@@ -1375,7 +1376,7 @@ function renderMineTotal() {
     <div class="stats" style="margin-top:12px">
       ${st('Seçtiğin yollarla toplam', coins(sum('total')), 'pos')}
       ${st('Hepsi en kârlı yolla olsaydı', coins(sum('best')))}
-      ${st('En uzun forge süresi', duration(Math.max(0, ...used.map((l) => l.time))) || '—')}
+      ${st('En uzun forge süresi', (Math.max(0, ...used.map((l) => l.time)) ? duration(Math.max(...used.map((l) => l.time))) : '—'))}
     </div>
     ${missing ? '<p class="small warn">Bazı yolların fiyatı eksik, toplamda 0 sayıldı.</p>' : ''}
     <p class="muted small">Forge süreleri her malzeme için ayrı hesaplandı; hepsini aynı anda forgelarsan slotlar paylaşılacağı için daha uzun sürer.</p>`;
