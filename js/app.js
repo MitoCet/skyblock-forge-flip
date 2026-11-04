@@ -48,6 +48,22 @@ function effective() {
   const a = !S.manualMode && S.auto;
   return { slots: a ? a.slots : S.slots, qfLevel: a ? a.qfLevel : S.qfLevel };
 }
+// ---------- view state (survives a page refresh) ----------
+// The open tab lives in the URL hash (#mine), so a refresh or a shared link opens the same tab.
+// Scroll position, search boxes, open rows and the open detail window are kept in sessionStorage:
+// they come back on refresh but a new visit starts clean.
+const TABS = ['best', 'compare', 'npc', 'craft', 'sellcraft', 'mine', 'settings'];
+const SEARCHES = ['search', 'npcSearch', 'craftSearch', 'scSearch'];
+let V = { scroll: {}, search: {}, craftOpen: null, scOpen: null, detail: null };
+try { V = { ...V, ...JSON.parse(sessionStorage.getItem('forgeflip-view') || '{}') }; } catch { /* blocked */ }
+function saveView() {
+  try { sessionStorage.setItem('forgeflip-view', JSON.stringify(V)); } catch { /* blocked */ }
+}
+const tabFromHash = () => (TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'best');
+const activeTab = () => document.querySelector('.tab.active')?.dataset.tab || 'best';
+// The browser would restore scroll before the tables are filled; it is done by hand after loading.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
 const QUICK_SECONDS = 600; // forges shorter than this are capped by market demand, not time
 const qfPercent = (lvl) => (lvl <= 0 ? 0 : lvl >= 20 ? 30 : 10 + lvl * 0.5);
 
@@ -84,7 +100,7 @@ async function loadData() {
   const [r, l] = await Promise.all([getJson(DATA_URL + 'recipes.json'), getJson(DATA_URL + 'latest.json')]);
   recipes = r.recipes; names = r.names; latest = l;
 }
-function history(id) {
+function priceHistory(id) {
   if (!histCache.has(id)) {
     histCache.set(id, getJson(`${DATA_URL}history/${safeName(id)}.json`).catch(() => null));
   }
@@ -233,7 +249,7 @@ function priceSeries(h, pick = (ask) => ask) {
 // Profit-per-item over time, from snapshots that every ingredient shares.
 async function profitSeries(r) {
   const ids = [r.id, ...r.inputs.filter((i) => i.id !== COIN).map((i) => i.id)];
-  const hs = await Promise.all(ids.map(history));
+  const hs = await Promise.all(ids.map(priceHistory));
   if (hs.some((h) => !h)) return [];
   const maps = hs.map((h) => new Map(priceSeries(h, bzBuyUnit)));
   const out = [];
@@ -345,6 +361,7 @@ async function openDetail(id) {
   sel.onchange = drawDetail;
   rangeButtons(document.querySelector('.range[data-target=detail]'), drawDetail);
   if (!$('#detail').open) $('#detail').showModal();
+  V.detail = id; saveView();
   await drawDetail();
 }
 
@@ -356,7 +373,7 @@ async function drawDetail() {
   let datasets;
   if (which === '__profit') datasets = [{ label: 'Kâr / item', points: await profitSeries(r) }];
   else {
-    const h = await history(which);
+    const h = await priceHistory(which);
     datasets = h?.market === 'bazaar'
       ? [
         { label: 'Anında alım fiyatı (en düşük satış emri)', points: priceSeries(h, (ask) => ask) },
@@ -793,7 +810,7 @@ function craftRows() {
   return out;
 }
 
-let craftOpen = null;
+let craftOpen = V.craftOpen;
 const SRC_LABEL = { bazaar: 'Bazaar anında alım', 'bazaar-order': 'Bazaar buy order', ah: 'AH lowest BIN', manual: 'elle', craft: 'craftlanır', free: 'satılamaz, 0 sayıldı', missing: 'fiyat yok', coin: 'coin' };
 
 function craftDetail(e) {
@@ -896,7 +913,7 @@ function sellCraftRows() {
 }
 
 const WHERE_LABEL = { bazaar: 'Bazaar', ah: 'AH', npc: 'NPC', unknown: '—' };
-let scOpen = null;
+let scOpen = V.scOpen;
 
 function sellCraftDetail(e) {
   const c = e.recipe;
@@ -1663,16 +1680,36 @@ function refreshAll() {
   if ($('#tab-mine').classList.contains('active')) renderMine();
 }
 
+// Opens a tab and writes it into the URL hash.
+function showTab(name, { render = true } = {}) {
+  if (!TABS.includes(name)) name = 'best';
+  document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === name));
+  document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${name}`));
+  if (location.hash.slice(1) !== name) history.replaceState(null, '', name === 'best' ? location.pathname + location.search : `#${name}`);
+  if (render) {
+    if (name === 'compare') renderCompare();
+    if (name === 'npc') renderNpc();
+    if (name === 'craft') renderCraft();
+    if (name === 'sellcraft') renderSellCraft();
+    if (name === 'mine') renderMine();
+  }
+}
+
 function wire() {
-  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
-    document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${t.dataset.tab}`));
-    if (t.dataset.tab === 'compare') renderCompare();
-    if (t.dataset.tab === 'npc') renderNpc();
-    if (t.dataset.tab === 'craft') renderCraft();
-    if (t.dataset.tab === 'sellcraft') renderSellCraft();
-    if (t.dataset.tab === 'mine') renderMine();
-  }));
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
+  window.addEventListener('hashchange', () => showTab(tabFromHash(), { render: !!latest }));
+  // Remember where the page is scrolled, per tab, to put it back after a refresh.
+  let scrollTimer = 0;
+  window.addEventListener('scroll', () => {
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => { V.scroll[activeTab()] = Math.round(scrollY); saveView(); }, 150);
+  }, { passive: true });
+  window.addEventListener('pagehide', () => { V.scroll[activeTab()] = Math.round(scrollY); saveView(); });
+  for (const id of SEARCHES) {
+    const el = document.getElementById(id);
+    if (V.search[id]) el.value = V.search[id];
+    el.addEventListener('input', () => { V.search[id] = el.value; saveView(); });
+  }
   // Controls bound to a setting; the same setting (e.g. buy mode) can appear on several tabs.
   const bound = document.querySelectorAll('[data-setting]');
   const syncBound = () => bound.forEach((el) => {
@@ -1694,6 +1731,7 @@ function wire() {
     const tr = ev.target.closest('tr[data-id]');
     if (!tr) return;
     craftOpen = craftOpen === tr.dataset.id ? null : tr.dataset.id;
+    V.craftOpen = craftOpen; saveView();
     renderCraft();
   });
   $('#scSearch').addEventListener('input', renderSellCraft);
@@ -1712,6 +1750,7 @@ function wire() {
     const tr = ev.target.closest('tr[data-id]');
     if (!tr) return;
     scOpen = scOpen === tr.dataset.id ? null : tr.dataset.id;
+    V.scOpen = scOpen; saveView();
     S.scCalcId = tr.dataset.id; save();
     $('#scCalcItem').value = anyName(tr.dataset.id);
     renderSellCraft();
@@ -1741,6 +1780,7 @@ function wire() {
     if (tr) openDetail(tr.dataset.id);
   });
   $('#closeDetail').addEventListener('click', () => $('#detail').close());
+  $('#detail').addEventListener('close', () => { V.detail = null; saveView(); });
   $('#detail').addEventListener('click', (ev) => { if (ev.target === $('#detail')) $('#detail').close(); });
   $('#detail').addEventListener('change', (ev) => {
     const id = ev.target.dataset.ov;
@@ -1780,6 +1820,7 @@ async function main() {
   // Keys saved before the date was tracked: start counting from now.
   if (S.apiKey && !S.apiKeySetAt) { S.apiKeySetAt = Date.now(); save(); }
   wire();
+  showTab(tabFromHash(), { render: false });
   renderKeyBanner();
   renderSettings();
   try {
@@ -1792,5 +1833,10 @@ async function main() {
   const age = Math.round((Date.now() / 1000 - latest.ts) / 60);
   $('#dataAge').textContent = `${recipes.length} forge tarifi · fiyatlar ${age < 1 ? 'az önce' : `${age} dk önce`} güncellendi (15 dakikada bir yenilenir)`;
   refreshAll();
+  // Tables are filled now (some tabs load market data first): put the page back where it was.
+  if (['npc', 'craft', 'sellcraft', 'mine'].includes(activeTab())) { try { await loadExtra(); } catch { /* tab shows it */ } }
+  await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+  scrollTo(0, V.scroll[activeTab()] || 0);
+  if (V.detail && recipes.some((r) => r.id === V.detail)) openDetail(V.detail);
 }
 main();
