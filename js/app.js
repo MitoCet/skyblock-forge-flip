@@ -23,7 +23,7 @@ const DEFAULTS = {
   npcSort: 'diff', npcOnlyNpc: false, npcOnlyFlip: false, npcView: 'all', farmSort: 'diff',
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
   scMarket: 'all', scSort: 'diff', scNpc: true, scOnlyCraft: false, scHideMissing: true,
-  scGemOnly: false, scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', perfectOnly: false, gemHold: {}, gemCountLow: false,
+  scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', gemHold: {}, gemCountLow: false,
   metalTungsten: 640, metalUmber: 640, metalUnit: 'ench', metalOwnPlates: false,
 };
 let S = load();
@@ -175,7 +175,6 @@ function rows() {
   let list = recipes.map(evaluate);
   if (S.market !== 'all') list = list.filter((e) => e.sale.market === S.market);
   if (S.hideMissing) list = list.filter((e) => !e.missing);
-  if (S.perfectOnly) list = list.filter((e) => isGem(e.id, 'PERFECT'));
   if (S.sort === 'hour' && !S.showQuick) list = list.filter((e) => e.time >= QUICK_SECONDS);
   if (S.hideLoss) list = list.filter((e) => e.profit == null || e.profit > 0);
   if (q) list = list.filter((e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
@@ -1055,8 +1054,6 @@ function gemHoldTotal(types) {
 
 function renderGemRank() {
   const box = $('#gemRank');
-  box.hidden = !S.scGemOnly;
-  if (!S.scGemOnly) return;
   const types = Object.keys(market.bz).map((id) => id.match(/^ROUGH_([A-Z]+)_GEM$/)?.[1]).filter(Boolean).sort();
   const gemName = (t) => anyName(`ROUGH_${t}_GEM`).replace(/^Rough /, '').replace(/ Gemstone$/, '');
   const rows = types.map((t) => {
@@ -1115,10 +1112,8 @@ async function renderSellCraft() {
   const q = $('#scSearch').value.trim().toLowerCase();
   let list = sellCraftRows();
   renderSellCraftCalc(list);
-  renderGemRank();
   if (S.scMarket !== 'all') list = list.filter((e) => e.market === S.scMarket);
   if (S.scHideMissing) list = list.filter((e) => !e.missing);
-  if (S.scGemOnly) list = list.filter((e) => isGem(e.id));
   if (S.scOnlyCraft) list = list.filter((e) => e.diff > 0);
   if (q) list = list.filter((e) => e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
   const key = S.scSort;
@@ -1143,6 +1138,41 @@ async function renderSellCraft() {
     + `Bazaar satışından %${S.bzTax} vergi (ayarlardan değişir), AH satışından ilan ve claim ücreti düşüldü. `
     + (S.scNpc ? 'NPC\'ye satmak daha iyiyse o kullanıldı (NPC\'de vergi yok). ' : '')
     + 'Değerler 1 adet craftlanan item için.';
+}
+
+// ---------- Gemstone tab ----------
+// Perfect gemstone forging (from the forge recipes) and the tier ranking / holdings calculator.
+function renderGemForge() {
+  const tbody = $('#gemForgeTable tbody');
+  if (!recipes.length) { tbody.innerHTML = '<tr><td colspan="7" class="muted">Forge tarifleri yükleniyor…</td></tr>'; return; }
+  const list = recipes.filter((r) => isGem(r.id, 'PERFECT')).map(evaluate)
+    .sort((a, b) => (a.perHour == null ? 1 : b.perHour == null ? -1 : b.perHour - a.perHour));
+  tbody.innerHTML = list.map((e) => {
+    const cls = e.profit == null ? '' : e.profit >= 0 ? 'pos' : 'neg';
+    return `<tr data-id="${esc(e.id)}">
+      <td>${esc(e.name)}</td>
+      <td class="num">${coins(e.cost)}</td>
+      <td class="num">${coins(e.sale.net)}</td>
+      <td class="num ${cls}">${coins(e.profit)}</td>
+      <td class="num">${duration(e.time)}</td>
+      <td class="num ${cls}">${coins(e.perHour)}</td>
+      <td class="num">${demandText(e)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted">Perfect gemstone tarifi bulunamadı.</td></tr>';
+}
+
+async function renderGem() {
+  renderGemForge();
+  const box = $('#gemRank');
+  if (!market) {
+    box.innerHTML = '<div class="empty">Fiyatlar yükleniyor…</div>';
+    try { await loadExtra(); } catch (err) {
+      console.error(err);
+      box.innerHTML = '<div class="empty">Bu bölümün verisi henüz yok. Fiyat toplayıcı bir sonraki çalışmasında (15 dakikada bir) oluşturacak.</div>';
+      return;
+    }
+  }
+  renderGemRank();
 }
 
 // ---------- Dwarven metal mining ----------
@@ -1522,6 +1552,7 @@ function refreshAll() {
   if ($('#tab-craft').classList.contains('active')) renderCraft();
   if ($('#tab-sellcraft').classList.contains('active')) renderSellCraft();
   if ($('#tab-metal').classList.contains('active')) renderMetal();
+  if ($('#tab-gem').classList.contains('active')) renderGem();
 }
 
 function wire() {
@@ -1533,6 +1564,7 @@ function wire() {
     if (t.dataset.tab === 'craft') renderCraft();
     if (t.dataset.tab === 'sellcraft') renderSellCraft();
     if (t.dataset.tab === 'metal') renderMetal();
+    if (t.dataset.tab === 'gem') renderGem();
   }));
   // Controls bound to a setting; the same setting (e.g. buy mode) can appear on several tabs.
   const bound = document.querySelectorAll('[data-setting]');
@@ -1587,6 +1619,10 @@ function wire() {
       return;
     }
     openDetail(id);
+  });
+  $('#gemForgeTable tbody').addEventListener('click', (ev) => {
+    const tr = ev.target.closest('tr[data-id]');
+    if (tr) openDetail(tr.dataset.id);
   });
   $('#closeDetail').addEventListener('click', () => $('#detail').close());
   $('#detail').addEventListener('click', (ev) => { if (ev.target === $('#detail')) $('#detail').close(); });

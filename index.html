@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Skyblock Forge Flip</title>
-  <link rel="stylesheet" href="css/style.css?v=20261102j">
+  <link rel="stylesheet" href="css/style.css?v=20261104a">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js" defer></script>
-  <script src="js/app.js?v=20261102j" defer></script>
+  <script src="js/app.js?v=20261104a" defer></script>
 </head>
 <body>
   <header class="top">
@@ -24,6 +24,7 @@
     <button class="tab" data-tab="craft">Craft mı al mı</button>
     <button class="tab" data-tab="sellcraft">Craftla mı sat mı</button>
     <button class="tab" data-tab="metal">Dwarven Metal Mining</button>
+    <button class="tab" data-tab="gem">Gemstone</button>
     <button class="tab" data-tab="settings">Profil ve ayarlar</button>
   </nav>
 
@@ -68,7 +69,6 @@
         </label>
         <label class="check"><input id="hideMissing" data-setting="hideMissing" type="checkbox" checked> Fiyatı eksik olanları gizle</label>
         <label class="check"><input id="hideLoss" data-setting="hideLoss" type="checkbox"> Zarar edenleri gizle</label>
-        <label class="check"><input data-setting="perfectOnly" type="checkbox"> Sadece Perfect gemstone'lar</label>
         <label class="check" title="Forge süresi 10 dakikadan kısa itemler saatlik sıralamada gizlenir, çünkü o hızda satacak kadar alıcı bulunmaz."><input id="showQuick" data-setting="showQuick" type="checkbox"> Saatlik sıralamada kısa süreli itemleri göster</label>
       </div>
       <div class="table-wrap">
@@ -304,11 +304,9 @@
           </select>
         </label>
         <label class="check" title="NPC'ye satışta vergi yoktur. İşaretliyse her item için Bazaar/AH net fiyatı ile NPC fiyatından hangisi yüksekse o kullanılır."><input data-setting="scNpc" type="checkbox"> NPC'ye satmayı da hesaba kat</label>
-        <label class="check" title="Rough, Flawed, Fine ve Flawless gemstone tarifleri."><input data-setting="scGemOnly" type="checkbox"> Sadece gemstone'lar</label>
         <label class="check"><input data-setting="scOnlyCraft" type="checkbox"> Sadece craftlamanın daha kârlı olduğu itemler</label>
         <label class="check"><input data-setting="scHideMissing" type="checkbox"> Fiyatı eksik olanları gizle</label>
       </div>
-      <div id="gemRank" class="card calc" hidden></div>
       <div class="table-wrap">
         <table id="scTable">
           <thead>
@@ -358,6 +356,49 @@
       </div>
       <div id="metalBody"></div>
       <p class="muted small" id="metalNote"></p>
+    </section>
+
+    <section id="tab-gem" class="panel">
+      <div class="live">
+        <button class="primary live-btn" type="button" data-ah="off">Güncel fiyatları çek</button>
+        <span class="live-status muted small"></span>
+      </div>
+      <div class="controls">
+        <label>Malzeme alışı
+          <select data-setting="buyMode">
+            <option value="instant">Anında alım</option>
+            <option value="order">Buy order</option>
+          </select>
+        </label>
+        <label>Bazaar satışı
+          <select data-setting="sellMode">
+            <option value="offer">Sell offer</option>
+            <option value="instant">Anında satış</option>
+          </select>
+        </label>
+        <label class="check" title="NPC'ye satışta vergi yoktur. İşaretliyse tier sıralamasında Bazaar net fiyatı ile NPC fiyatından hangisi yüksekse o kullanılır."><input data-setting="scNpc" type="checkbox"> NPC'ye satmayı da hesaba kat</label>
+      </div>
+      <div class="card calc">
+        <h3>Perfect gemstone forge</h3>
+        <p class="muted small">Flawless gemlerden forgelanan Perfect gemstone'lar. Crystal'lar (Ruby Crystal gibi) satılamadığı için maliyete 0 olarak katılır. Detay ve grafik için satıra tıkla.</p>
+        <div class="table-wrap">
+          <table id="gemForgeTable">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th class="num">Maliyet</th>
+                <th class="num">Satış (net)</th>
+                <th class="num">Kâr / item</th>
+                <th class="num">Süre</th>
+                <th class="num">Kâr / saat</th>
+                <th class="num" title="Bazaar: son 7 günde sell offer ile satışta anında alınan, anında satışta anında satılan adet. AH: şu anki BIN ilan sayısı.">Talep</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="gemRank" class="card calc"><div class="empty">Fiyatlar yükleniyor…</div></div>
     </section>
 
     <section id="tab-settings" class="panel">
