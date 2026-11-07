@@ -26,7 +26,7 @@ const DEFAULTS = {
   scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', gemHold: {}, gemCountLow: false,
   metalOwnPlates: false,
   mine: null, mineRoute: {}, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
-  sackFetch: null, // { profile, items, fetchedAt, savedAt }: the last pull from the sacks
+  sackFetch: null, // { profile, sig, changedAt, items, fetchedAt }: the last pull from the sacks
 };
 let S = load();
 // gemHold used to hold one { tier, qty } per gemstone; now it holds an amount per tier.
@@ -1544,12 +1544,9 @@ async function getProfiles() {
   return body;
 }
 
-// When Hypixel last saved this profile (ms), or 0 if the API does not say.
-function profileSavedAt(p, member) {
-  for (const t of [member?.last_save, member?.profile?.last_save, p?.last_save]) {
-    if (Number(t) > 0) return Number(t);
-  }
-  return 0;
+// A fingerprint of the sack contents, to tell whether they changed between two pulls.
+function sackSig(sacks) {
+  return Object.keys(sacks).filter((k) => sacks[k] > 0).sort().map((k) => `${k}:${sacks[k]}`).join(',');
 }
 
 function fmtWhen(t) {
@@ -1565,11 +1562,13 @@ function fmtWhen(t) {
 function renderSackStatus() {
   const f = S.sackFetch, status = $('#mineSackStatus');
   if (!f || !status) return;
-  const saved = f.savedAt
-    ? `Hypixel'in kaydı: ${fmtWhen(f.savedAt)}`
-    : 'Hypixel bu profilin kayıt zamanını vermedi';
+  // Hypixel does not say when it last saved the profile, so the best sign of freshness is
+  // whether the contents moved since an earlier pull.
+  const same = f.changedAt && f.changedAt < f.fetchedAt
+    ? ` · Sack içeriği ${fmtWhen(f.changedAt)} yapılan çekimden beri değişmedi. Oyunda yeni bir şey koyduysan Hypixel henüz kaydetmemiş olabilir; lobi ya da ada değiştirip birkaç dakika sonra tekrar dene.`
+    : '';
   status.dataset.live = '1';
-  status.textContent = `${f.profile} profilinin sack'lerinden alındı: ${f.items.join(', ') || 'hiçbir şey bulunamadı'}. Çekildi: ${fmtWhen(f.fetchedAt)} · ${saved}.`;
+  status.textContent = `${f.profile} profilinin sack'lerinden alındı: ${f.items.join(', ') || 'hiçbir şey bulunamadı'}. Çekildi: ${fmtWhen(f.fetchedAt)}${same}`;
 }
 
 // Fills the mined amounts and the gemstone holdings from the player's sacks.
@@ -1601,11 +1600,14 @@ async function fetchSacks() {
       S.mine[m.id] = { raw, ench };
       if (raw || ench) got.push(m.name);
     }
+    const sig = sackSig(sacks), prev = S.sackFetch, now = Date.now();
     S.sackFetch = {
       profile: p.cute_name,
+      sig,
+      // When the contents were first seen as they are now (an earlier pull of the same profile).
+      changedAt: prev && prev.sig === sig && prev.profile === p.cute_name ? prev.changedAt || prev.fetchedAt : now,
       items: [...got, gems ? `${gems.toLocaleString('tr-TR')} gemstone` : null].filter(Boolean),
-      fetchedAt: Date.now(),
-      savedAt: profileSavedAt(p, member),
+      fetchedAt: now,
     };
     save();
     renderSackStatus();
