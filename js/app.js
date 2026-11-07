@@ -26,6 +26,7 @@ const DEFAULTS = {
   scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', gemHold: {}, gemCountLow: false,
   metalOwnPlates: false,
   mine: null, mineRoute: {}, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
+  sackFetch: null, // { profile, items, fetchedAt, savedAt }: the last pull from the sacks
 };
 let S = load();
 // gemHold used to hold one { tier, qty } per gemstone; now it holds an amount per tier.
@@ -1543,11 +1544,39 @@ async function getProfiles() {
   return body;
 }
 
+// When Hypixel last saved this profile (ms), or 0 if the API does not say.
+function profileSavedAt(p, member) {
+  for (const t of [member?.last_save, member?.profile?.last_save, p?.last_save]) {
+    if (Number(t) > 0) return Number(t);
+  }
+  return 0;
+}
+
+function fmtWhen(t) {
+  const d = new Date(t), now = new Date();
+  const time = d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+  const day = d.toDateString() === now.toDateString() ? '' : `${d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })} `;
+  const min = Math.max(0, Math.round((now - d) / 60000));
+  const ago = min < 1 ? 'az önce' : min < 60 ? `${min} dk önce` : min < 1440 ? `${Math.floor(min / 60)} sa ${min % 60} dk önce` : `${Math.floor(min / 1440)} gün önce`;
+  return `${day}${time}, ${ago}`;
+}
+
+// Shows what the last sack pull brought and how fresh it is.
+function renderSackStatus() {
+  const f = S.sackFetch, status = $('#mineSackStatus');
+  if (!f || !status) return;
+  const saved = f.savedAt
+    ? `Hypixel'in kaydı: ${fmtWhen(f.savedAt)}`
+    : 'Hypixel bu profilin kayıt zamanını vermedi';
+  status.dataset.live = '1';
+  status.textContent = `${f.profile} profilinin sack'lerinden alındı: ${f.items.join(', ') || 'hiçbir şey bulunamadı'}. Çekildi: ${fmtWhen(f.fetchedAt)} · ${saved}.`;
+}
+
 // Fills the mined amounts and the gemstone holdings from the player's sacks.
 async function fetchSacks() {
   const btn = $('#mineSackBtn'), status = $('#mineSackStatus');
-  if (!S.username || !S.apiKey) { status.textContent = 'Önce "Profil ve ayarlar" sekmesine kullanıcı adını ve API anahtarını gir.'; return; }
-  btn.disabled = true; status.textContent = 'Sack\'ler çekiliyor…';
+  if (!S.username || !S.apiKey) { status.dataset.live = ''; status.textContent = 'Önce "Profil ve ayarlar" sekmesine kullanıcı adını ve API anahtarını gir.'; return; }
+  btn.disabled = true; status.dataset.live = ''; status.textContent = 'Sack\'ler çekiliyor…';
   try {
     const { profiles } = await getProfiles();
     const p = profiles.find((x) => x.profile_id === S.profileId) || profiles.find((x) => x.selected) || profiles[0];
@@ -1572,8 +1601,14 @@ async function fetchSacks() {
       S.mine[m.id] = { raw, ench };
       if (raw || ench) got.push(m.name);
     }
+    S.sackFetch = {
+      profile: p.cute_name,
+      items: [...got, gems ? `${gems.toLocaleString('tr-TR')} gemstone` : null].filter(Boolean),
+      fetchedAt: Date.now(),
+      savedAt: profileSavedAt(p, member),
+    };
     save();
-    status.textContent = `${p.cute_name} profilinin sack'lerinden alındı: ${[...got, gems ? `${gems.toLocaleString('tr-TR')} gemstone` : null].filter(Boolean).join(', ') || 'hiçbir şey bulunamadı'} (${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}).`;
+    renderSackStatus();
     renderMine();
   } catch (err) {
     status.textContent = err instanceof TypeError ? 'Hypixel\'e bağlanılamadı. İnternet bağlantını kontrol edip tekrar dene.' : err.message;
@@ -1767,6 +1802,8 @@ function wire() {
     openDetail(id);
   });
   $('#mineSackBtn').addEventListener('click', fetchSacks);
+  renderSackStatus();
+  setInterval(() => { if ($('#mineSackStatus').dataset.live) renderSackStatus(); }, 60 * 1000);
   $('#tab-mine').addEventListener('change', (ev) => {
     const el = ev.target, d = el.dataset;
     if (d.mine) S.mine[d.mine] = { ...S.mine[d.mine], [d.k]: Math.max(0, Math.floor(Number(el.value) || 0)) };
