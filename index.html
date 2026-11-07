@@ -332,7 +332,7 @@
       </div>
       <div class="live">
         <button id="mineSackBtn" class="primary" type="button">Sack'lerden çek</button>
-        <span id="mineSackStatus" class="muted small">Tungsten, Umber, Glacite, Mithril, Titanium, Hard Stone, Refined Mineral, Glossy Gemstone, Suspicious Scrap ve gemstone adetlerini profilindeki sack'lerden doldurur.</span>
+        <span id="mineSackStatus" class="muted small">Tungsten, Umber, Glacite, Mithril, Titanium, Hard Stone, Refined Mineral, Glossy Gemstone, Suspicious Scrap ve gemstone adetlerini profilindeki sack'lerden doldurur; forgede olan Refined, Plate, Glacite Amalgamation ve Perfect gemstone'ları da gösterir.</span>
       </div>
       <div class="seg" role="radiogroup" aria-label="Gösterilen">
         <label><input type="radio" name="mineView" value="all" data-setting="mineView"> Hepsi</label>
@@ -361,6 +361,7 @@
         <label class="check" title="Perfect Plate ve Skeleton Key hesabında Tungsten ve Umber Plate'i satın alma fiyatıyla değil, satsan alacağın net fiyatla sayar."><input type="checkbox" data-setting="metalOwnPlates"> Tungsten/Umber Plate'i kendim yapıyorum</label>
         <label class="check" title="NPC'ye satışta vergi yoktur. İşaretliyse gemstone hesabında Bazaar net fiyatı ile NPC fiyatından hangisi yüksekse o kullanılır."><input data-setting="scNpc" type="checkbox"> Gemstone'da NPC'ye satmayı da hesaba kat</label>
       </div>
+      <div id="mineForge" class="card calc" hidden></div>
       <div id="mineBody"></div>
       <div id="mineGem" hidden>
         <div class="card calc">

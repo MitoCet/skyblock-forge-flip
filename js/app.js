@@ -27,6 +27,7 @@ const DEFAULTS = {
   metalOwnPlates: false,
   mine: null, mineRoute: {}, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
   sackFetch: null, // { profile, sig, changedAt, items, fetchedAt }: the last pull from the sacks
+  forging: null, // [{ id, slot, start }]: mining-route items in the forge at the last sack pull
 };
 let S = load();
 // gemHold used to hold one { tier, qty } per gemstone; now it holds an amount per tier.
@@ -1297,6 +1298,67 @@ function mineCalc(m) {
 
 const inTotal = (id) => S.mineInTotal[id] !== false;
 
+// ---------- items in the forge ----------
+// Only forges that belong to the routes on this tab: Refined / Plate / key of each metal,
+// Glacite Amalgamation, Perfect Plate, Skeleton Key and Perfect gemstones.
+function isMineForge(id) {
+  if (isGem(id, 'PERFECT') || id === 'PERFECT_PLATE' || id === 'SKELETON_KEY') return true;
+  return MINE.some((m) => [m.refined, m.plate, m.key].includes(id));
+}
+// Hypixel keeps the forge as forge.forge_processes.forge_1 = { "1": { id, startTime, slot }, … }.
+function readForge(member) {
+  const out = [];
+  for (const group of Object.values(member?.forge?.forge_processes || {})) {
+    for (const [slot, p] of Object.entries(group || {})) {
+      if (p?.id && isMineForge(p.id)) out.push({ id: p.id, slot: Number(p.slot ?? slot), start: Number(p.startTime) || 0 });
+    }
+  }
+  return out.sort((a, b) => a.slot - b.slot);
+}
+// One forge job with its value and when it is done (recipe time with the Quick Forge discount).
+function forgeJob(f) {
+  const r = forgeRecipe(f.id);
+  const count = r?.count || 1;
+  const net = marketSell(f.id).net;
+  const end = r && f.start ? f.start + r.duration * 1000 * (1 - qfPercent(effective().qfLevel) / 100) : null;
+  return { ...f, count, value: net == null ? null : net * count, end };
+}
+const forgeJobs = () => (S.forging || []).map(forgeJob);
+function forgeLeft(end) {
+  if (end == null) return '—';
+  const left = end - Date.now();
+  return left <= 0 ? '<span class="tag pos">Hazır</span>' : `${duration(left / 1000)} kaldı`;
+}
+const forgeEndText = (end) => (end == null ? '' : new Date(end).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }));
+// "2× Refined Tungsten, 1× Perfect Plate" for the given jobs.
+function forgeSummary(jobs) {
+  const by = new Map();
+  for (const j of jobs) by.set(j.id, (by.get(j.id) || 0) + j.count);
+  return [...by].map(([id, n]) => `${fmtAmt(n)}× ${anyName(id)}`).join(', ');
+}
+
+function renderForging() {
+  const box = $('#mineForge');
+  if (!S.forging) { box.hidden = true; return; }
+  box.hidden = false;
+  const jobs = forgeJobs();
+  if (!jobs.length) {
+    box.innerHTML = '<h3>Forgede olanlar</h3><p class="muted small">Son çekimde forgede bu sekmedeki yollarla ilgili item yoktu (Refined, Plate, anahtar, Glacite Amalgamation, Perfect Plate, Skeleton Key, Perfect gemstone).</p>';
+    return;
+  }
+  const total = jobs.reduce((a, j) => a + (j.value ?? 0), 0);
+  box.innerHTML = `<h3>Forgede olanlar</h3>
+    <div class="table-wrap"><table><thead><tr>
+      <th>Slot</th><th>Item</th>
+      <th class="num" title="Seçili satış yöntemiyle, vergi düşülmüş satış. Malzemeler zaten harcandığı için tamamı kazanç sayılır.">Değer (net)</th>
+      <th class="num">Bitiş</th><th class="num">Kalan</th>
+    </tr></thead><tbody>
+    ${jobs.map((j) => `<tr><td>${j.slot}</td><td>${esc(anyName(j.id))}${j.count > 1 ? ` <span class="muted">×${j.count}</span>` : ''}</td>
+      <td class="num">${coins(j.value)}</td><td class="num small">${forgeEndText(j.end)}</td><td class="num">${forgeLeft(j.end)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="muted small">Toplam ${coins(total)} değerinde. "Sack'lerden çek" ile birlikte profilden alındı; bitiş zamanı tarif süresi ve Quick Forge seviyenle hesaplandı. Alttaki toplama "Forgedekiler" olarak eklenir.</p>`;
+}
+
 function mineSection(m) {
   const { slots } = effective();
   const c = mineCalc(m);
@@ -1329,7 +1391,10 @@ function mineSection(m) {
     </tr>`;
   }).join('');
   return `<div class="card calc">
-    <h3>${m.name}</h3>
+    <h3>${m.name}${(() => {
+      const jobs = forgeJobs().filter((j) => [m.refined, m.plate, m.key].includes(j.id));
+      return jobs.length ? ` <span class="tag" title="Son çekimde forgede.">Forgede: ${esc(forgeSummary(jobs))}</span>` : '';
+    })()}</h3>
     <div class="controls">
       <label>${m.simple ? 'Adet' : `Ham ${esc(anyName(m.raw))}`} <input type="number" min="0" step="1" data-mine="${m.id}" data-k="raw" value="${c.raw || ''}" placeholder="0"></label>
       ${m.simple ? '' : `<label>${esc(anyName(m.ench))} <input type="number" min="0" step="1" data-mine="${m.id}" data-k="ench" value="${c.ench || ''}" placeholder="0"></label>`}
@@ -1377,6 +1442,12 @@ function renderMineTotal() {
   }).filter(Boolean);
   const g = gemTotals();
   if (g.has) lines.push({ id: 'GEM', name: 'Gemstone', what: 'Elimdeki gemstone\'lar tablosunda seçtiğin tierlar', total: g.chosen, best: g.best, time: 0 });
+  const jobs = forgeJobs();
+  if (jobs.length) {
+    const v = jobs.some((j) => j.value == null) ? null : jobs.reduce((a, j) => a + j.value, 0);
+    const left = Math.max(0, ...jobs.map((j) => (j.end == null ? 0 : (j.end - Date.now()) / 1000)));
+    lines.push({ id: 'FORGE', name: 'Forgedekiler', what: forgeSummary(jobs), total: v, best: v, time: left });
+  }
   if (!lines.length) { box.innerHTML = '<h3>Toplam</h3><p class="muted small">Henüz adet yok. "Sack\'lerden çek" ile ya da bölümlere adet yazarak doldur.</p>'; return; }
   const used = lines.filter((l) => inTotal(l.id));
   const sum = (k) => used.reduce((a, l) => a + (l[k] ?? 0), 0);
@@ -1435,6 +1506,7 @@ async function renderMine() {
   const gem = view === 'all' || view === 'GEM';
   $('#mineGem').hidden = !gem;
   if (gem) { renderGemForge(); renderGemRank(); }
+  renderForging();
   renderMineTotal();
   $('#metalNote').textContent = 'Tarifler NotEnoughUpdates verisinden: anahtar, Refined ve Glacite Amalgamation doğrudan Enchanted malzemeden, Plate ise Refined + Glacite Amalgamation ile forgelanır. Ek malzemeler (Bejeweled Handle, Glacite Amalgamation, Fine gemler…) satın alınmış sayılır. '
     + `Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). Bir sonraki ürüne yetmeyen miktar Enchanted (ya da ham) olarak satılmış sayılır. `
@@ -1580,8 +1652,11 @@ async function fetchSacks() {
     const { profiles } = await getProfiles();
     const p = profiles.find((x) => x.profile_id === S.profileId) || profiles.find((x) => x.selected) || profiles[0];
     const member = p.members[fetchedProfiles.uuid];
+    // The forge comes with the same request and doesn't need the Inventory API.
+    S.forging = readForge(member);
+    save();
     const sacks = member?.inventory?.sacks_counts ?? member?.sacks_counts;
-    if (!sacks) throw new Error('Sack bilgisi gelmedi. Oyunda SkyBlock Menu → Settings → API Settings\'ten Inventory API\'yi aç, birkaç dakika sonra tekrar dene.');
+    if (!sacks) { renderMine(); throw new Error('Sack bilgisi gelmedi. Oyunda SkyBlock Menu → Settings → API Settings\'ten Inventory API\'yi aç, birkaç dakika sonra tekrar dene.'); }
     const hold = {};
     let gems = 0;
     for (const [id, n] of Object.entries(sacks)) {
@@ -1606,7 +1681,8 @@ async function fetchSacks() {
       sig,
       // When the contents were first seen as they are now (an earlier pull of the same profile).
       changedAt: prev && prev.sig === sig && prev.profile === p.cute_name ? prev.changedAt || prev.fetchedAt : now,
-      items: [...got, gems ? `${gems.toLocaleString('tr-TR')} gemstone` : null].filter(Boolean),
+      items: [...got, gems ? `${gems.toLocaleString('tr-TR')} gemstone` : null,
+        S.forging.length ? `forgede ${S.forging.length} item` : null].filter(Boolean),
       fetchedAt: now,
     };
     save();
