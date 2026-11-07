@@ -138,3 +138,12 @@ td.best { outline: 1px solid var(--good); outline-offset: -3px; border-radius: 4
 .key-banner.expired { border-color: var(--bad); background: rgba(230, 103, 103, .12); }
 .key-banner a { color: var(--accent); }
 td.dim { opacity: .5; }
+
+/* Thin Bazaar market marker and its tap-to-open reason box */
+.tag.thin { color: var(--series-4); cursor: help; }
+.tip {
+  position: fixed; z-index: 50; max-width: min(360px, calc(100vw - 16px));
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary); white-space: pre-line;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .5);
+}

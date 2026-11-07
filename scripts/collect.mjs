@@ -52,18 +52,21 @@ for (const id of tracked) {
     bid: round(p.sell_summary?.[0]?.pricePerUnit ?? q.sellPrice),
     buyWeek: q.buyMovingWeek ?? 0,
     sellWeek: q.sellMovingWeek ?? 0,
+    // Order counts: buyOrders are the sell offers (instant buys fill them), sellOrders the buy orders.
+    buyOrders: q.buyOrders ?? 0,
+    sellOrders: q.sellOrders ?? 0,
     asks: (p.buy_summary || []).slice(0, 15).map((o) => [round(o.pricePerUnit), o.amount]),
   };
 }
 
-// Every Bazaar product: [instant buy, instant sell, buyWeek, sellWeek].
+// Every Bazaar product: [instant buy, instant sell, buyWeek, sellWeek, sell offers, buy orders].
 const bzAll = {};
 for (const [id, p] of Object.entries(bz.products || {})) {
   const q = p.quick_status || {};
   const ask = round(p.buy_summary?.[0]?.pricePerUnit ?? null);
   const bid = round(p.sell_summary?.[0]?.pricePerUnit ?? null);
   if (ask == null && bid == null) continue;
-  bzAll[id] = [ask, bid, q.buyMovingWeek ?? 0, q.sellMovingWeek ?? 0];
+  bzAll[id] = [ask, bid, q.buyMovingWeek ?? 0, q.sellMovingWeek ?? 0, q.buyOrders ?? 0, q.sellOrders ?? 0];
 }
 
 // Auction House: lowest BIN per unit for items that are not on the Bazaar.

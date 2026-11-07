@@ -413,6 +413,12 @@
           <p class="muted small" id="effectiveInfo"></p>
         </div>
         <div class="card">
+          <h3>Az işlem gören itemler</h3>
+          <p class="muted small">Bazaar'da hacmi ya da order sayısı bu sınırların altında kalan itemlerin yanına <span class="tag thin">⚠ az işlem</span> yazılır; gizlenmez. Üzerine dokununca nedeni (kaç order var, haftalık hacim, sınır) görünür. Sell offer ile satarken anında alım hacmi ve sell offer sayısı, anında satarken anında satış hacmi ve buy order sayısı bakılır. 0 yazarsan o sınır kapanır.</p>
+          <label>En az haftalık hacim (adet) <input id="thinVolume" type="number" min="0" step="100"></label>
+          <label>En az order sayısı <input id="thinOrders" type="number" min="0" step="1"></label>
+        </div>
+        <div class="card">
           <h3>Elle girilen fiyatlar</h3>
           <p class="muted small">Bir itemin detayından o item için kendi fiyatını girebilirsin. Elle girilen fiyat Hypixel fiyatının yerine geçer.</p>
           <ul id="overrideList" class="plain"></ul>
@@ -420,6 +426,8 @@
       </div>
     </section>
   </main>
+
+  <div id="thinTip" class="tip" role="tooltip" hidden></div>
 
   <dialog id="detail">
     <div class="dialog-head">

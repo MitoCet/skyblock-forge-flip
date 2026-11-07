@@ -16,6 +16,7 @@ const DEFAULTS = {
   apiKeySetAt: 0, apiKeyRejected: false, // when the key was entered; Hypixel said it is invalid
   auto: null, // { slots, qfLevel, hotmTier, profileName, fetchedAt }
   manualMode: false, slots: 2, qfLevel: 0, bzTax: 1.25,
+  thinVolume: 1000, thinOrders: 5, // Bazaar items under these are marked "az işlem" (0 turns a limit off)
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
@@ -177,6 +178,56 @@ function saleValue(id, count) {
   return { market: 'unknown', unit: null, net: null, demand: null, src: 'missing' };
 }
 
+// ---------- thin Bazaar markets ----------
+// A few orders or little weekly volume make a price easy to skew (one high sell offer
+// can inflate a profit), so such items get an "az işlem" tag. Nothing is hidden.
+// Hypixel's quick_status: buyMovingWeek / buyOrders are the instant-buy side (sell offers),
+// sellMovingWeek / sellOrders the instant-sell side (buy orders).
+function bzStats(id) {
+  const l = latest?.bazaar?.[id];
+  const m = market?.bz?.[id];
+  if (!l && !m) return null;
+  return {
+    buyWeek: l?.buyWeek ?? m?.[2] ?? 0,
+    sellWeek: l?.sellWeek ?? m?.[3] ?? 0,
+    offers: l?.buyOrders ?? m?.[4] ?? null,
+    orders: l?.sellOrders ?? m?.[5] ?? null,
+    asks: l?.asks || null,
+  };
+}
+const fmtInt = (n) => (n == null ? 'bilinmiyor' : Math.round(n).toLocaleString('tr-TR'));
+function thinInfo(id) {
+  const s = bzStats(id);
+  if (!s) return null;
+  const instant = S.sellMode === 'instant';
+  const vol = instant ? s.sellWeek : s.buyWeek;
+  const n = instant ? s.orders : s.offers;
+  const volName = instant ? 'haftalık anında satış' : 'haftalık anında alım';
+  const nName = instant ? 'buy order sayısı' : 'sell offer sayısı';
+  const why = [];
+  if (S.thinVolume > 0 && vol < S.thinVolume) why.push(`${volName} ${fmtInt(vol)} < sınır ${fmtInt(S.thinVolume)}`);
+  if (S.thinOrders > 0 && n != null && n < S.thinOrders) why.push(`${nName} ${fmtInt(n)} < sınır ${fmtInt(S.thinOrders)}`);
+  if (!why.length) return null;
+  const lines = [
+    `Neden: ${why.join('; ')}.`,
+    `Sell offer: ${fmtInt(s.offers)} · Buy order: ${fmtInt(s.orders)}`,
+    `Haftalık anında alım (buyMovingWeek): ${fmtInt(s.buyWeek)}`,
+    `Haftalık anında satış (sellMovingWeek): ${fmtInt(s.sellWeek)}`,
+  ];
+  if (!instant && s.asks?.length) {
+    lines.push(`En ucuz sell offerlar: ${s.asks.slice(0, 3).map(([p, a]) => `${coins(p)} ×${fmtInt(a)}`).join(', ')}`);
+  }
+  if (s.offers == null) lines.push('Order sayıları fiyat toplayıcının bir sonraki çalışmasından sonra görünecek.');
+  lines.push(`Sınırlar: haftalık ${fmtInt(S.thinVolume)} adet, ${fmtInt(S.thinOrders)} order (Profil ve ayarlar).`,
+    instant ? 'Anında satışta buy orderlara satıyorsun; hacim anında satış tarafından.' : 'Sell offer ile satışta alıcılar anında alımla gelir; hacim anında alım tarafından.');
+  return lines.join('\n');
+}
+// The tag shown next to a Bazaar item; tap or hover shows why.
+function thinTag(id) {
+  const tip = thinInfo(id);
+  return tip ? ` <span class="tag thin" tabindex="0" title="${esc(tip)}" data-tip="${esc(tip)}">⚠ az işlem</span>` : '';
+}
+
 function evaluate(r) {
   const { qfLevel } = effective();
   const time = r.duration * (1 - qfPercent(qfLevel) / 100);
@@ -228,7 +279,7 @@ function renderBest() {
     const manual = e.sale.src === 'manual' || e.inputs.some((i) => i.src === 'manual') ? ' <span class="tag">elle</span>' : '';
     return `<tr data-id="${esc(e.id)}">
       <td><input type="checkbox" class="cmp" ${checked} aria-label="Karşılaştırmaya ekle"></td>
-      <td>${esc(e.name)}${e.r.count > 1 ? ` <span class="muted">×${e.r.count}</span>` : ''}${manual}${quick}</td>
+      <td>${esc(e.name)}${e.r.count > 1 ? ` <span class="muted">×${e.r.count}</span>` : ''}${manual}${quick}${e.sale.market === 'bazaar' ? thinTag(e.id) : ''}</td>
       <td><span class="tag">${market}</span></td>
       <td class="num">${coins(e.cost)}</td>
       <td class="num">${coins(e.sale.net)}</td>
@@ -424,7 +475,7 @@ async function renderCompare() {
     ${row('Forge süresi', (e) => e.time, duration, false)}
     ${row('Kâr / saat (1 slot)', (e) => e.perHour)}
     ${row(`Günlük kâr (${slots} slot)`, (e) => (e.perHour == null ? null : e.perHour * 24 * slots))}
-    <tr><th>Talep</th>${list.map((e) => `<td class="num">${demandText(e)}</td>`).join('')}</tr>
+    <tr><th>Talep</th>${list.map((e) => `<td class="num">${demandText(e)}${e.sale.market === 'bazaar' ? thinTag(e.id) : ''}</td>`).join('')}</tr>
   </tbody>`;
   $('#compareTable').onclick = (ev) => {
     const id = ev.target.dataset.rm;
@@ -447,7 +498,7 @@ async function drawCompare() {
 }
 
 // ---------- market-wide data (NPC, craft and craft-or-sell tabs) ----------
-// market.json: every Bazaar product [ask, bid, buyWeek, sellWeek] and every AH item [lowestBin, listings].
+// market.json: every Bazaar product [ask, bid, buyWeek, sellWeek, sellOffers, buyOrders] and every AH item [lowestBin, listings].
 let market = null, npcData = null, craftData = null;
 const craftsBy = new Map();
 let extraPromise = null;
@@ -545,7 +596,7 @@ async function fetchLive(withAh, status) {
     const ask = roundP(p.buy_summary?.[0]?.pricePerUnit ?? null);
     const bid = roundP(p.sell_summary?.[0]?.pricePerUnit ?? null);
     if (ask == null && bid == null) continue;
-    bz[id] = [ask, bid, q.buyMovingWeek ?? 0, q.sellMovingWeek ?? 0];
+    bz[id] = [ask, bid, q.buyMovingWeek ?? 0, q.sellMovingWeek ?? 0, q.buyOrders ?? 0, q.sellOrders ?? 0];
   }
   // Forge items and their inputs, in the latest.json shape (same as scripts/collect.mjs).
   const tracked = new Set();
@@ -563,6 +614,8 @@ async function fetchLive(withAh, status) {
       bid: roundP(p.sell_summary?.[0]?.pricePerUnit ?? q.sellPrice),
       buyWeek: q.buyMovingWeek ?? 0,
       sellWeek: q.sellMovingWeek ?? 0,
+      buyOrders: q.buyOrders ?? 0,
+      sellOrders: q.sellOrders ?? 0,
       asks: (p.buy_summary || []).slice(0, 15).map((o) => [roundP(o.pricePerUnit), o.amount]),
     };
   }
@@ -675,7 +728,7 @@ async function renderNpc() {
     const toNpc = e.diff > 0;
     const fcls = e.flip == null ? '' : e.flip > 0 ? 'pos' : 'neg';
     return `<tr>
-      <td>${esc(e.name)}</td>
+      <td>${esc(e.name)}${thinTag(e.id)}</td>
       <td class="num">${coins(e.npc)}</td>
       <td class="num">${coins(e.sell)}</td>
       <td><span class="tag">${toNpc ? 'NPC' : 'Bazaar'}</span></td>
@@ -721,7 +774,7 @@ async function renderFarm() {
   if (S.farmSort === 'name') list.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
   else list.sort((a, b) => (b.diffPct ?? -1) - (a.diffPct ?? -1));
   tbody.innerHTML = list.map((e) => `<tr>
-      <td>${esc(e.name)}</td>
+      <td>${esc(e.name)}${thinTag(e.id)}</td>
       <td class="num${e.best === 'npc' ? ' best' : ''}">${coins(e.npc)}</td>
       <td class="num${e.best === 'bz' ? ' best' : ''}">${coins(e.bz)}</td>
       <td>${e.best ? `<span class="tag pos">${e.best === 'npc' ? 'NPC' : 'Bazaar'}</span>` : '—'}</td>
@@ -860,7 +913,7 @@ async function renderCraft() {
     const pcls = e.profit == null ? '' : e.profit > 0 ? 'pos' : 'neg';
     const demand = e.sale.demand == null ? '—' : e.market === 'ah' ? `${e.sale.demand} ilan` : `${coins(e.sale.demand)}/hf`;
     return `<tr data-id="${esc(e.id)}">
-      <td>${esc(e.name)}</td>
+      <td>${esc(e.name)}${e.market === 'bazaar' ? thinTag(e.id) : ''}</td>
       <td><span class="tag">${e.market === 'ah' ? 'AH' : 'Bazaar'}</span></td>
       <td class="num">${coins(e.buy)}</td>
       <td class="num">${coins(e.craft.unit)}</td>
@@ -926,7 +979,7 @@ function sellCraftDetail(e) {
     ${c.count > 1 ? `<p class="small muted">Bir craft ${c.count} adet verir; malzeme değeri adet başına bölündü.</p>` : ''}
     ${e.alts > 1 ? `<p class="small muted">Bu itemin ${e.alts} tarifi var; craftlamanın en kârlı olduğu gösteriliyor.</p>` : ''}
     <table><thead><tr><th>Malzeme (1 craft)</th><th class="num">Adet</th><th class="num">Birim (net)</th><th class="num">Toplam (net)</th><th>Nereye</th></tr></thead>
-    <tbody>${e.inputs.map((i) => `<tr><td>${esc(anyName(i.id))}</td><td class="num">${i.count.toLocaleString('tr-TR')}</td>
+    <tbody>${e.inputs.map((i) => `<tr><td>${esc(anyName(i.id))}${i.where === 'bazaar' ? thinTag(i.id) : ''}</td><td class="num">${i.count.toLocaleString('tr-TR')}</td>
       <td class="num">${coins(i.unit)}</td><td class="num">${coins(i.total)}</td>
       <td>${i.unit == null ? '<span class="tag">fiyat yok</span>' : `<span class="tag">${WHERE_LABEL[i.where]}</span> <span class="muted small">${tax(i.where)}</span>`}</td></tr>`).join('')}
       <tr><td><b>Çıktı:</b> ${esc(e.name)}</td><td class="num">${c.count}</td><td class="num">${coins(e.out.net)}</td><td class="num">${coins(e.out.net == null ? null : e.out.net * c.count)}</td>
@@ -1087,7 +1140,7 @@ function renderGemRank() {
   const rows = types.map((t) => {
     const tiers = GEM_TIERS.map(([k, label, eq]) => {
       const s = bestSale(`${k}_${t}_GEM`);
-      return { label, per: s.net == null ? null : (s.net / eq) * 1000, where: s.where };
+      return { label, id: `${k}_${t}_GEM`, per: s.net == null ? null : (s.net / eq) * 1000, where: s.where };
     }).filter((x) => x.per != null).sort((a, b) => b.per - a.per);
     return { t, name: gemName(t), tiers, pick: tierLabel(priceBestTier(t)) };
   });
@@ -1107,7 +1160,7 @@ function renderGemRank() {
   box.innerHTML = `<h3>Gemstone tier sıralaması</h3>
     <p class="muted small">Her gemstone için hangi tierda satmanın en kârlı olduğu. Değerler 1000 ham (Rough) gem başına net coin: Bazaar vergisi düşüldü${S.scNpc ? ', NPC daha iyiyse o sayıldı' : ''}. Yeşil çerçeve Fine ile Flawless'tan daha kârlı olanı gösterir; Rough ve Flawed fiyatları büyük satışta tutmadığı için soluk.</p>
     <div class="table-wrap"><table><thead><tr><th>Gemstone</th>${[...Array(n).keys()].map((i) => `<th>${i + 1}.</th>`).join('')}</tr></thead><tbody>
-    ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td class="${x.label === r.pick ? 'best' : x.label === 'Fine' || x.label === 'Flawless' ? '' : 'dim'}"><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : ''} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` <span class="nowrap">(−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})</span>` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
+    ${rows.map((r) => `<tr><td>${esc(r.name)}</td>${r.tiers.map((x, i) => `<td class="${x.label === r.pick ? 'best' : x.label === 'Fine' || x.label === 'Flawless' ? '' : 'dim'}"><b>${x.label}</b>${x.where === 'npc' ? ' <span class="tag">NPC</span>' : thinTag(x.id)} <span class="muted small">${coins(x.per)}${i > 0 && r.tiers[0].per > 0 ? ` <span class="nowrap">(−%${((1 - x.per / r.tiers[0].per) * 100).toFixed(1)})</span>` : ''}</span></td>`).join('')}${'<td></td>'.repeat(n - r.tiers.length)}</tr>`).join('')}
     </tbody></table></div>
     <h3>Elimdeki gemstone'lar</h3>
     <label class="check" title="Fine'a craftlanamayacak kadar az kalan Rough ve Flawed gemler varsayılan olarak toplama katılmaz."><input type="checkbox" id="gemCountLow"${S.gemCountLow ? ' checked' : ''}> Fine'a craftlanamayan Rough/Flawed artıklarını da hesaba kat</label>
@@ -1152,7 +1205,7 @@ async function renderSellCraft() {
     const where = e.out.where === 'npc' ? 'NPC' : e.market === 'ah' ? 'AH' : e.market === 'bazaar' ? 'Bazaar' : '?';
     const demand = e.demand == null ? '—' : e.market === 'ah' ? `${e.demand} ilan` : `${coins(e.demand)}/hf`;
     return `<tr data-id="${esc(e.id)}">
-      <td>${esc(e.name)}</td>
+      <td>${esc(e.name)}${e.out.where === 'bazaar' ? thinTag(e.id) : ''}</td>
       <td><span class="tag">${where}</span></td>
       <td class="num">${coins(e.directNet)}</td>
       <td class="num">${coins(e.craftNet)}</td>
@@ -1431,7 +1484,7 @@ function mineSection(m) {
     const dcls = diff == null || Math.abs(diff) < 0.5 ? '' : diff > 0 ? 'pos' : 'neg';
     const ex = (r.extras || []).filter((e) => e.count > 0)
       .map((e) => `${e.count}× ${esc(anyName(e.id))} (${coins(e.unit)})`).join(', ');
-    const what = `${fmtAmt(r.n)}× ${esc(anyName(r.product))}`
+    const what = `${fmtAmt(r.n)}× ${esc(anyName(r.product))}${thinTag(r.product)}`
       + (r.per ? ` <span class="muted small">(${r.per} Enchanted/adet)</span>` : '')
       + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${fmtAmt(r.leftover, 1)} Enchanted artar, ${m.noSell ? 'sende kalır' : 'olduğu gibi satılır'}</span>` : '')
       + (c.rawLeft > 0 && r.product !== m.raw ? `<br><span class="muted small">+ ${fmtAmt(c.rawLeft)} ham artar, ${m.noSell ? 'sende kalır' : 'ham satılır'}</span>` : '');
@@ -1538,7 +1591,7 @@ function renderGemForge() {
   tbody.innerHTML = list.map((e) => {
     const cls = e.profit == null ? '' : e.profit >= 0 ? 'pos' : 'neg';
     return `<tr data-id="${esc(e.id)}">
-      <td>${esc(e.name)}</td>
+      <td>${esc(e.name)}${e.sale.market === 'bazaar' ? thinTag(e.id) : ''}</td>
       <td class="num">${coins(e.cost)}</td>
       <td class="num">${coins(e.sale.net)}</td>
       <td class="num ${cls}">${coins(e.profit)}</td>
@@ -1611,7 +1664,7 @@ function perfectSection() {
     const cls = r.profit == null ? '' : r.profit >= 0 ? 'pos' : 'neg';
     const ins = r.inputs.map((i) => `${i.count}× ${esc(anyName(i.id))} (${coins(i.unit)}${i.own ? ', senin' : ''})`).join('<br>');
     return `<tr>
-      <td>${esc(r.label)}${r === cheaper ? ' <span class="tag pos">Daha ucuz</span>' : ''}</td>
+      <td>${esc(r.label)}${r === cheaper ? ' <span class="tag pos">Daha ucuz</span>' : ''}${thinTag(r.product)}</td>
       <td class="small">${ins}</td>
       <td class="num${r === cheaper ? ' best' : ''}">${coins(r.cost)}</td>
       <td class="num">${coins(r.sale)}</td>
@@ -1831,6 +1884,8 @@ function renderSettings() {
   $('#slots').value = eff.slots;
   $('#qfLevel').value = eff.qfLevel;
   $('#bzTax').value = S.bzTax;
+  $('#thinVolume').value = S.thinVolume;
+  $('#thinOrders').value = S.thinOrders;
   const src = !S.manualMode && S.auto ? `profil (${esc(S.auto.profileName)})` : 'elle girilen değerler';
   $('#effectiveInfo').innerHTML = `Kullanılan: ${eff.slots} slot, Quick Forge ${eff.qfLevel} (süre −%${qfPercent(eff.qfLevel)}). Kaynak: ${src}.`
     + (S.auto ? '' : '<br>Profil henüz çekilmedi.');
@@ -1870,6 +1925,29 @@ function showTab(name, { render = true } = {}) {
 }
 
 function wire() {
+  // "az işlem" tags: a tap (phones have no hover) or Enter shows the reason in a small box.
+  // Capture phase, so tapping the tag doesn't also open the row it sits in.
+  const tipBox = $('#thinTip');
+  const showTip = (el) => {
+    tipBox.textContent = el.dataset.tip;
+    tipBox.hidden = false;
+    const r = el.getBoundingClientRect();
+    const w = tipBox.offsetWidth;
+    tipBox.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.left))}px`;
+    const below = r.bottom + 6;
+    tipBox.style.top = `${below + tipBox.offsetHeight > innerHeight - 8 ? Math.max(8, r.top - tipBox.offsetHeight - 6) : below}px`;
+  };
+  document.addEventListener('click', (ev) => {
+    const el = ev.target.closest?.('.thin');
+    if (!el) { if (!ev.target.closest?.('#thinTip')) tipBox.hidden = true; return; }
+    ev.stopPropagation(); ev.preventDefault();
+    showTip(el);
+  }, true);
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') tipBox.hidden = true;
+    else if (ev.key === 'Enter' && ev.target.classList?.contains('thin')) showTip(ev.target);
+  });
+  window.addEventListener('scroll', () => { tipBox.hidden = true; }, { passive: true, capture: true });
   document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
   window.addEventListener('hashchange', () => showTab(tabFromHash(), { render: !!latest }));
   // Remember where the page is scrolled, per tab, to put it back after a refresh.
@@ -1982,11 +2060,12 @@ function wire() {
   setInterval(renderKeyBanner, 10 * 60 * 1000);
   $('#profileSelect').addEventListener('change', (ev) => applyProfile(ev.target.value));
   $('#manualMode').addEventListener('change', (ev) => { S.manualMode = ev.target.checked; save(); refreshAll(); });
-  for (const [id, key, min, max] of [['#slots', 'slots', 1, 7], ['#qfLevel', 'qfLevel', 0, 20], ['#bzTax', 'bzTax', 0, 5]]) {
+  for (const [id, key, min, max] of [['#slots', 'slots', 1, 7], ['#qfLevel', 'qfLevel', 0, 20], ['#bzTax', 'bzTax', 0, 5],
+    ['#thinVolume', 'thinVolume', 0, 1e9], ['#thinOrders', 'thinOrders', 0, 1e6]]) {
     $(id).addEventListener('change', (ev) => {
       const v = Math.min(max, Math.max(min, Number(ev.target.value) || 0));
       // Typing a slot or Quick Forge value means the user wants their own numbers.
-      if (key !== 'bzTax' && !S.manualMode) Object.assign(S, effective(), { manualMode: true });
+      if ((key === 'slots' || key === 'qfLevel') && !S.manualMode) Object.assign(S, effective(), { manualMode: true });
       S[key] = v;
       save(); refreshAll();
     });
