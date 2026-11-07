@@ -28,6 +28,8 @@ const DEFAULTS = {
   mine: null, mineRoute: {}, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
   sackFetch: null, // { profile, sig, changedAt, items, fetchedAt }: the last pull from the sacks
   forging: null, // [{ id, slot, start }]: mining-route items in the forge at the last sack pull
+  forgeAll: null, // every forge job at the last sack pull, for the "done" notifications
+  forgeNotify: false, forgeNotified: {}, // notify when a forge is done; keys `${slot}:${start}` already notified
 };
 let S = load();
 // gemHold used to hold one { tier, qty } per gemstone; now it holds an amount per tier.
@@ -1306,11 +1308,11 @@ function isMineForge(id) {
   return MINE.some((m) => [m.refined, m.plate, m.key].includes(id));
 }
 // Hypixel keeps the forge as forge.forge_processes.forge_1 = { "1": { id, startTime, slot }, … }.
-function readForge(member) {
+function readForge(member, all = false) {
   const out = [];
   for (const group of Object.values(member?.forge?.forge_processes || {})) {
     for (const [slot, p] of Object.entries(group || {})) {
-      if (p?.id && isMineForge(p.id)) out.push({ id: p.id, slot: Number(p.slot ?? slot), start: Number(p.startTime) || 0 });
+      if (p?.id && (all || isMineForge(p.id))) out.push({ id: p.id, slot: Number(p.slot ?? slot), start: Number(p.startTime) || 0 });
     }
   }
   return out.sort((a, b) => a.slot - b.slot);
@@ -1337,13 +1339,69 @@ function forgeSummary(jobs) {
   return [...by].map(([id, n]) => `${fmtAmt(n)}× ${anyName(id)}`).join(', ');
 }
 
+// ---------- forge done notifications ----------
+// A static page can't push on its own, so this works while the tab is open (it may be in the
+// background). Jobs already done when they are first seen are not announced.
+const forgeKey = (f) => `${f.slot}:${f.start}`;
+const canNotify = () => 'Notification' in window;
+function markDoneForges() {
+  const now = Date.now();
+  const keep = {};
+  for (const j of (S.forgeAll || []).map(forgeJob)) {
+    const k = forgeKey(j);
+    if (S.forgeNotified[k] || (j.end != null && j.end <= now)) keep[k] = 1;
+  }
+  S.forgeNotified = keep;
+}
+function checkForgeDone() {
+  if (!S.forgeNotify || !canNotify() || Notification.permission !== 'granted') return;
+  const now = Date.now();
+  const done = (S.forgeAll || []).map(forgeJob).filter((j) => j.end != null && j.end <= now && !S.forgeNotified[forgeKey(j)]);
+  if (!done.length) return;
+  for (const j of done) S.forgeNotified[forgeKey(j)] = 1;
+  save();
+  const body = done.map((j) => `Slot ${j.slot}: ${anyName(j.id)}${j.count > 1 ? ` ×${j.count}` : ''}`).join('\n');
+  try {
+    const n = new Notification(done.length > 1 ? `${done.length} forge bitti` : 'Forge bitti', { body, tag: 'forge-done' });
+    n.onclick = () => { window.focus(); showTab('mine'); n.close(); };
+  } catch { /* some mobile browsers only notify through a service worker */ }
+  if ($('#tab-mine').classList.contains('active')) renderForging();
+}
+function nextForgeEnd() {
+  const now = Date.now();
+  const ends = (S.forgeAll || []).map(forgeJob).map((j) => j.end).filter((e) => e != null && e > now);
+  return ends.length ? Math.min(...ends) : null;
+}
+function forgeNotifyHtml() {
+  if (!canNotify()) return '<p class="muted small">Bu tarayıcı bildirimleri desteklemiyor.</p>';
+  const perm = Notification.permission;
+  const next = nextForgeEnd();
+  const state = !S.forgeNotify ? ''
+    : perm === 'denied' ? ' <span class="warn">Tarayıcı bildirimlere izin vermiyor; adres çubuğundaki site ayarlarından izin ver.</span>'
+      : perm !== 'granted' ? ' <span class="warn">Bildirim izni bekleniyor.</span>'
+        : next ? ` Sıradaki: ${forgeEndText(next)}.` : ' Bekleyen forge yok.';
+  return `<p class="small"><label class="check"><input type="checkbox" id="forgeNotify"${S.forgeNotify ? ' checked' : ''}> Forge bitince bildirim gönder</label>${state}</p>
+    <p class="muted small">Forgedaki her item için (yalnız bu tablodakiler değil) bitiş saatinde bildirim gelir. Bunun için bu sekme açık kalmalı, arka planda olabilir; tarayıcı kapalıyken bildirim gelmez. Yeni bir forge koyunca "Sack'lerden çek" ile listeyi yenile.</p>`;
+}
+async function setForgeNotify(on) {
+  S.forgeNotify = on;
+  if (on) {
+    markDoneForges();
+    if (canNotify() && Notification.permission === 'default') {
+      try { await Notification.requestPermission(); } catch { /* old Safari */ }
+    }
+  }
+  save();
+  renderForging();
+}
+
 function renderForging() {
   const box = $('#mineForge');
   if (!S.forging) { box.hidden = true; return; }
   box.hidden = false;
   const jobs = forgeJobs();
   if (!jobs.length) {
-    box.innerHTML = '<h3>Forgede olanlar</h3><p class="muted small">Son çekimde forgede bu sekmedeki yollarla ilgili item yoktu (Refined, Plate, anahtar, Glacite Amalgamation, Perfect Plate, Skeleton Key, Perfect gemstone).</p>';
+    box.innerHTML = '<h3>Forgede olanlar</h3>' + forgeNotifyHtml() + '<p class="muted small">Son çekimde forgede bu sekmedeki yollarla ilgili item yoktu (Refined, Plate, anahtar, Glacite Amalgamation, Perfect Plate, Skeleton Key, Perfect gemstone).</p>';
     return;
   }
   const total = jobs.reduce((a, j) => a + (j.value ?? 0), 0);
@@ -1356,6 +1414,7 @@ function renderForging() {
     ${jobs.map((j) => `<tr><td>${j.slot}</td><td>${esc(anyName(j.id))}${j.count > 1 ? ` <span class="muted">×${j.count}</span>` : ''}</td>
       <td class="num">${coins(j.value)}</td><td class="num small">${forgeEndText(j.end)}</td><td class="num">${forgeLeft(j.end)}</td></tr>`).join('')}
     </tbody></table></div>
+    ${forgeNotifyHtml()}
     <p class="muted small">Toplam ${coins(total)} değerinde. "Sack'lerden çek" ile birlikte profilden alındı; bitiş zamanı tarif süresi ve Quick Forge seviyenle hesaplandı. Alttaki toplama "Forgedekiler" olarak eklenir.</p>`;
 }
 
@@ -1654,6 +1713,8 @@ async function fetchSacks() {
     const member = p.members[fetchedProfiles.uuid];
     // The forge comes with the same request and doesn't need the Inventory API.
     S.forging = readForge(member);
+    S.forgeAll = readForge(member, true);
+    markDoneForges();
     save();
     const sacks = member?.inventory?.sacks_counts ?? member?.sacks_counts;
     if (!sacks) { renderMine(); throw new Error('Sack bilgisi gelmedi. Oyunda SkyBlock Menu → Settings → API Settings\'ten Inventory API\'yi aç, birkaç dakika sonra tekrar dene.'); }
@@ -1880,6 +1941,12 @@ function wire() {
     openDetail(id);
   });
   $('#mineSackBtn').addEventListener('click', fetchSacks);
+  $('#mineForge').addEventListener('change', (ev) => { if (ev.target.id === 'forgeNotify') setForgeNotify(ev.target.checked); });
+  // Checked every 20 s; the "Kalan" column is refreshed with it.
+  setInterval(() => {
+    checkForgeDone();
+    if (S.forging?.length && $('#tab-mine').classList.contains('active') && !$('#mineForge').contains(document.activeElement)) renderForging();
+  }, 20 * 1000);
   renderSackStatus();
   setInterval(() => { if ($('#mineSackStatus').dataset.live) renderSackStatus(); }, 60 * 1000);
   $('#tab-mine').addEventListener('change', (ev) => {
