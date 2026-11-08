@@ -1260,15 +1260,14 @@ function metalRoute(m, label, product, n, extraCost, leftover, stages, missing) 
   const { slots, qfLevel } = effective();
   const k = 1 - qfPercent(qfLevel) / 100;
   const sale = marketSell(product);
-  const enchSale = marketSell(m.ench);
-  const leftoverNet = leftover > 0 && !m.noSell ? (enchSale.net == null ? null : enchSale.net * leftover) : 0;
-  const ok = !missing && sale.net != null && extraCost != null && leftoverNet != null;
+  const ok = !missing && sale.net != null && extraCost != null;
+  // Enchanted left over after the last full forge is kept, never sold (counted as 0).
   const slotSec = stages.reduce((t, [jobs, sec]) => t + jobs * sec * k, 0);
   const wallSec = stages.reduce((t, [jobs, sec]) => t + Math.ceil(jobs / slots) * sec * k, 0);
   return {
     label, product, n, extraCost, leftover,
     gross: sale.net == null ? null : sale.net * n,
-    total: ok ? sale.net * n - extraCost + leftoverNet : null,
+    total: ok ? sale.net * n - extraCost : null,
     slotSec, wallSec, demand: sale.demand,
   };
 }
@@ -1340,11 +1339,10 @@ function mineCalc(m) {
   const whole = ench + Math.floor(raw / ratio);
   const rawLeft = raw - Math.floor(raw / ratio) * ratio;
   const rawSale = marketSell(m.raw).net;
-  // Raw that doesn't make a full Enchanted is sold raw on every route.
-  const rawLeftNet = rawLeft > 0 && !m.noSell ? (rawSale == null ? null : rawSale * rawLeft) : 0;
+  // Raw that doesn't make a full Enchanted is kept on every route but "sell raw" (counted as 0).
   const rows = metalRoutes(m, whole).map((r) => {
     if (r.product === m.raw) return { ...r, n: r.n + rawLeft, total: r.total == null || rawSale == null ? r.total : r.total + rawSale * rawLeft };
-    return { ...r, total: r.total == null || rawLeftNet == null ? null : r.total + rawLeftNet };
+    return r;
   });
   const best = rows.reduce((b, r) => (r.total != null && (r.n > 0 || r.product === m.ench) && (!b || r.total > b.total) ? r : b), null);
   const chosen = rows.find((r) => r.label === S.mineRoute[m.id]) || best;
@@ -1486,15 +1484,14 @@ function mineSection(m) {
       .map((e) => `${e.count}× ${esc(anyName(e.id))} (${coins(e.unit)})`).join(', ');
     const what = `${fmtAmt(r.n)}× ${esc(anyName(r.product))}${thinTag(r.product)}`
       + (r.per ? ` <span class="muted small">(${r.per} Enchanted/adet)</span>` : '')
-      + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${fmtAmt(r.leftover, 1)} Enchanted artar, ${m.noSell ? 'sende kalır' : 'olduğu gibi satılır'}</span>` : '')
-      + (c.rawLeft > 0 && r.product !== m.raw ? `<br><span class="muted small">+ ${fmtAmt(c.rawLeft)} ham artar, ${m.noSell ? 'sende kalır' : 'ham satılır'}</span>` : '');
+      + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${fmtAmt(r.leftover, 1)} Enchanted artar, sende kalır</span>` : '')
+      + (c.rawLeft > 0 && r.product !== m.raw ? `<br><span class="muted small">+ ${fmtAmt(c.rawLeft)} ham artar, sende kalır</span>` : '');
     const ench = m.simple ? 0 : c.whole + c.rawLeft / enchRatio(m);
     // Sell rows of raw / Enchanted also show what the NPC pays (shown only, not a route).
     const npcUnit = !m.simple && (r.product === m.raw || r.product === m.ench) ? npcData?.npc[r.product] ?? null : null;
-    const npcRow = r.product === m.raw ? r.n : r.n + (c.rawLeft > 0 ? c.rawLeft / enchRatio(m) : 0);
-    const npcLine = npcUnit == null ? ''
-      : `<br><span class="muted small">NPC: ${coins(npcUnit)}/adet → ${coins(npcUnit * npcRow)}`
-        + `${r.total != null && npcUnit * npcRow > r.total ? ' <span class="tag pos">NPC daha iyi</span>' : ''}</span>`;
+        const npcLine = npcUnit == null ? ''
+      : `<br><span class="muted small">NPC: ${coins(npcUnit)}/adet → ${coins(npcUnit * r.n)}`
+        + `${r.total != null && npcUnit * r.n > r.total ? ' <span class="tag pos">NPC daha iyi</span>' : ''}</span>`;
     return `<tr>
       <td class="nowrap"><label class="check"><input type="radio" name="route-${m.id}" data-route="${m.id}" value="${esc(r.label)}"${r === c.chosen ? ' checked' : ''}> ${esc(r.label)}</label>${r === c.best ? ' <span class="tag pos">En kârlı</span>' : ''}</td>
       <td>${what}${npcLine}${ex ? `<br><span class="muted small">Ek: ${ex}</span>` : ''}</td>
@@ -1535,7 +1532,7 @@ function mineSection(m) {
       </tr></thead>
       <tbody>${tr}</tbody>
     </table></div>
-    <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı).${m.noSell ? ' Ham ya da Enchanted satış büyük miktarda gerçekçi olmadığı için seçenek değil; son forge\'a yetmeyen kısım sende kalır ve toplama katılmaz.' : ''}</p>`
+    <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı).${m.noSell ? ' Ham ya da Enchanted satış büyük miktarda gerçekçi olmadığı için seçenek değil; son forge\'a yetmeyen kısım sende kalır ve toplama katılmaz.' : ' Son forge\'a yetmeyen Enchanted ve ham artıkları satılmaz, sende kalır ve toplama katılmaz.'}</p>`
     : '<p class="muted small">Adet yaz ya da yukarıdan "Sack\'lerden çek".</p>'}
     ${m.id === 'UMBER' || (m.id === 'TUNGSTEN' && S.mineView === 'TUNGSTEN') ? perfectSection() : ''}
   </div>`;
