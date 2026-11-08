@@ -1489,9 +1489,15 @@ function mineSection(m) {
       + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${fmtAmt(r.leftover, 1)} Enchanted artar, ${m.noSell ? 'sende kalır' : 'olduğu gibi satılır'}</span>` : '')
       + (c.rawLeft > 0 && r.product !== m.raw ? `<br><span class="muted small">+ ${fmtAmt(c.rawLeft)} ham artar, ${m.noSell ? 'sende kalır' : 'ham satılır'}</span>` : '');
     const ench = m.simple ? 0 : c.whole + c.rawLeft / enchRatio(m);
+    // Sell rows of raw / Enchanted also show what the NPC pays (shown only, not a route).
+    const npcUnit = !m.simple && (r.product === m.raw || r.product === m.ench) ? npcData?.npc[r.product] ?? null : null;
+    const npcRow = r.product === m.raw ? r.n : r.n + (c.rawLeft > 0 ? c.rawLeft / enchRatio(m) : 0);
+    const npcLine = npcUnit == null ? ''
+      : `<br><span class="muted small">NPC: ${coins(npcUnit)}/adet → ${coins(npcUnit * npcRow)}`
+        + `${r.total != null && npcUnit * npcRow > r.total ? ' <span class="tag pos">NPC daha iyi</span>' : ''}</span>`;
     return `<tr>
       <td class="nowrap"><label class="check"><input type="radio" name="route-${m.id}" data-route="${m.id}" value="${esc(r.label)}"${r === c.chosen ? ' checked' : ''}> ${esc(r.label)}</label>${r === c.best ? ' <span class="tag pos">En kârlı</span>' : ''}</td>
-      <td>${what}${ex ? `<br><span class="muted small">Ek: ${ex}</span>` : ''}</td>
+      <td>${what}${npcLine}${ex ? `<br><span class="muted small">Ek: ${ex}</span>` : ''}</td>
       <td class="num">${r.extraCost ? coins(r.extraCost) : '—'}</td>
       <td class="num">${coins(r.gross)}</td>
       <td class="num${r === c.best ? ' best' : ''}">${coins(r.total)}</td>
