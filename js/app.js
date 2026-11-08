@@ -1728,9 +1728,10 @@ async function getProfiles() {
   return body;
 }
 
-// A fingerprint of the sack contents, to tell whether they changed between two pulls.
-function sackSig(sacks) {
-  return Object.keys(sacks).filter((k) => sacks[k] > 0).sort().map((k) => `${k}:${sacks[k]}`).join(',');
+// A fingerprint of the sack and forge contents, to tell whether the profile changed between two pulls.
+function sackSig(sacks, forge = []) {
+  const s = Object.keys(sacks).filter((k) => sacks[k] > 0).sort().map((k) => `${k}:${sacks[k]}`).join(',');
+  return `${s}|${forge.map((f) => `${f.slot}:${f.id}:${f.start}`).join(',')}`;
 }
 
 function fmtWhen(t) {
@@ -1749,7 +1750,7 @@ function renderSackStatus() {
   // Hypixel does not say when it last saved the profile, so the best sign of freshness is
   // whether the contents moved since an earlier pull.
   const same = f.changedAt && f.changedAt < f.fetchedAt
-    ? ` · Sack içeriği ${fmtWhen(f.changedAt)} yapılan çekimden beri değişmedi. Oyunda yeni bir şey koyduysan Hypixel henüz kaydetmemiş olabilir; lobi ya da ada değiştirip birkaç dakika sonra tekrar dene.`
+    ? ` · Sack ve forge içeriği ${fmtWhen(f.changedAt)} yapılan çekimden beri değişmedi. Oyunda yeni bir şey koyduysan Hypixel henüz kaydetmemiş olabilir; lobi ya da ada değiştirip birkaç dakika sonra tekrar dene.`
     : '';
   status.dataset.live = '1';
   status.textContent = `${f.profile} profilinin sack'lerinden alındı: ${f.items.join(', ') || 'hiçbir şey bulunamadı'}. Çekildi: ${fmtWhen(f.fetchedAt)}${same}`;
@@ -1789,7 +1790,7 @@ async function fetchSacks() {
       S.mine[m.id] = { raw, ench };
       if (raw || ench) got.push(m.name);
     }
-    const sig = sackSig(sacks), prev = S.sackFetch, now = Date.now();
+    const sig = sackSig(sacks, S.forgeAll), prev = S.sackFetch, now = Date.now();
     S.sackFetch = {
       profile: p.cute_name,
       sig,
