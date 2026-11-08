@@ -1538,6 +1538,7 @@ function mineSection(m) {
     <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı).${m.noSell ? ' Ham ya da Enchanted satış büyük miktarda gerçekçi olmadığı için seçenek değil; son forge\'a yetmeyen kısım sende kalır ve toplama katılmaz.' : ''}</p>`
     : '<p class="muted small">Adet yaz ya da yukarıdan "Sack\'lerden çek".</p>'}
     ${m.id === 'UMBER' || (m.id === 'TUNGSTEN' && S.mineView === 'TUNGSTEN') ? perfectSection() : ''}
+    ${m.id === 'GLACITE' ? amalgSection() : ''}
   </div>`;
 }
 
@@ -1650,6 +1651,73 @@ function perfectRoute(label, product, inputs, stages) {
     wallSec: stages.reduce((t, sec) => t + sec * k, 0),
   };
 }
+// ---------- gemstones for Glacite Amalgamation ----------
+// Fills every free forge slot with one Glacite Amalgamation: the Fine gems it needs are taken from
+// what is held, the shortfall is crafted up from held Flawed (and Rough, 80 → 1 each step) as far as
+// full crafts allow, and only the rest is bought. Slots busy in the last pull are not counted.
+function amalgPlan() {
+  const r = forgeRecipe('GLACITE_AMALGAMATION');
+  if (!r) return null;
+  const { slots } = effective();
+  const busy = S.forgeAll ? S.forgeAll.length : null;
+  const free = Math.max(0, slots - (busy || 0));
+  const gems = r.inputs.filter((i) => isGem(i.id, 'FINE')).map((i) => {
+    const t = i.id.match(/^FINE_([A-Z]+)_GEM$/)[1];
+    const h = S.gemHold[t] || {};
+    const fine = Math.max(0, Math.floor(Number(h.FINE) || 0));
+    const flawed = Math.max(0, Math.floor(Number(h.FLAWED) || 0));
+    const rough = Math.max(0, Math.floor(Number(h.ROUGH) || 0));
+    const need = i.count * free;
+    const short = Math.max(0, need - fine);
+    const canCraft = Math.floor((flawed + Math.floor(rough / 80)) / 80);
+    const craft = Math.min(short, canCraft);
+    // Held Flawed first; the Flawed still missing for those crafts come from Rough.
+    const flawedNeed = craft * 80;
+    const fromRough = Math.max(0, flawedNeed - flawed);
+    const buy = short - craft;
+    const unit = marketBuy(i.id).unit;
+    return { id: i.id, per: i.count, need, fine, flawed, rough, craft, useFlawed: flawedNeed - fromRough,
+      craftFlawed: fromRough, useRough: fromRough * 80, buy, unit, cost: buy === 0 ? 0 : unit == null ? null : unit * buy };
+  });
+  const glacite = r.inputs.find((i) => i.id === 'ENCHANTED_GLACITE');
+  const g = MINE.find((m) => m.id === 'GLACITE');
+  const { raw, ench } = mineHold(g);
+  const enchHave = ench + Math.floor(raw / enchRatio(g));
+  const cost = gems.some((x) => x.cost == null) ? null : gems.reduce((a, x) => a + x.cost, 0);
+  return { slots, busy, free, gems, cost, glacitePer: glacite?.count || 0, enchHave };
+}
+
+function amalgSection() {
+  const p = amalgPlan();
+  if (!p) return '';
+  const head = `<h3>Amalgamation için gemstone planı</h3>
+    <p class="small">${p.busy == null
+      ? `Forge bilgisi henüz çekilmedi, ${p.slots} slotun hepsi boş sayıldı. Dolu slotları düşmek için "Sack'lerden çek".`
+      : `${p.slots} slotun ${p.busy} tanesi dolu (son çekim), <b>${p.free} boş slot</b> için hesaplandı.`}</p>`;
+  if (!p.free) return `<div class="amalg">${head}<p class="muted small">Boş slot yok.</p></div>`;
+  const rows = p.gems.map((x) => {
+    const craftTxt = x.craft
+      ? `${fmtN(x.craft)} Fine craftla<br><span class="muted small">${fmtN(x.useFlawed)} Flawed${x.craftFlawed ? ` + ${fmtN(x.useRough)} Rough → ${fmtN(x.craftFlawed)} Flawed` : ''}</span>`
+      : '—';
+    return `<tr><td>${esc(anyName(x.id))}</td><td class="num">${fmtN(x.need)}</td><td class="num">${fmtN(x.fine)}</td>
+      <td class="num small">${fmtN(x.flawed)} / ${fmtN(x.rough)}</td><td>${craftTxt}</td>
+      <td class="num"><b>${fmtN(x.buy)}</b></td><td class="num">${x.buy ? coins(x.unit) : '—'}</td><td class="num">${coins(x.cost)}</td></tr>`;
+  }).join('');
+  const glNeed = p.glacitePer * p.free;
+  const glLine = p.enchHave >= glNeed
+    ? `Enchanted Glacite yeterli: ${fmtN(glNeed)} gerekli, sende ${fmtN(p.enchHave)} var.`
+    : `<span class="warn">Enchanted Glacite yetmiyor: ${fmtN(glNeed)} gerekli, sende ${fmtN(p.enchHave)} var (${fmtN(Math.floor(p.enchHave / p.glacitePer))} Amalgamation'a yeter).</span>`;
+  return `<div class="amalg">${head}
+    <div class="table-wrap"><table><thead><tr>
+      <th>Gemstone</th><th class="num" title="Boş slot × tarifteki adet.">Gerekli</th><th class="num">Sende (Fine)</th>
+      <th class="num" title="Sende olan Flawed / Rough.">Flawed / Rough</th><th>Craftla</th>
+      <th class="num">Satın al</th><th class="num" title="Seçili alış yöntemiyle 1 Fine.">Birim</th><th class="num">Maliyet</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="small">Satın alma toplamı: <b>${coins(p.cost)}</b>. ${glLine}</p>
+    <p class="muted small">Eksik Fine'lar önce sendeki Flawed'dan (80 Flawed = 1 Fine), Flawed yetmezse Rough'tan (80 Rough = 1 Flawed) craftlanır; tam craft olmayan kısım satın alınır. Flawless aşağı bölünmez. Adetler "Sack'lerden çek" ya da gemstone tablosundaki girişlerden gelir.</p>
+  </div>`;
+}
+
 function perfectSection() {
   const pp = forgeRecipe('PERFECT_PLATE'), sk = forgeRecipe('SKELETON_KEY');
   if (!pp || !sk) return '';
