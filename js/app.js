@@ -1656,7 +1656,11 @@ function amalgPlan() {
   const r = forgeRecipe('GLACITE_AMALGAMATION');
   if (!r) return null;
   const { slots } = effective();
-  const busy = S.forgeAll ? S.forgeAll.length : null;
+  // A job whose end time has passed counts as free: it is collected and the slot refilled.
+  const now = Date.now();
+  const all = S.forgeAll ? S.forgeAll.map(forgeJob) : null;
+  const busy = all ? all.filter((j) => j.end == null || j.end > now).length : null;
+  const done = all ? all.length - busy : 0;
   const free = Math.max(0, slots - (busy || 0));
   const gems = r.inputs.filter((i) => isGem(i.id, 'FINE')).map((i) => {
     const t = i.id.match(/^FINE_([A-Z]+)_GEM$/)[1];
@@ -1681,7 +1685,7 @@ function amalgPlan() {
   const { raw, ench } = mineHold(g);
   const enchHave = ench + Math.floor(raw / enchRatio(g));
   const cost = gems.some((x) => x.cost == null) ? null : gems.reduce((a, x) => a + x.cost, 0);
-  return { slots, busy, free, gems, cost, glacitePer: glacite?.count || 0, enchHave };
+  return { slots, busy, done, free, gems, cost, glacitePer: glacite?.count || 0, enchHave };
 }
 
 function amalgSection() {
@@ -1690,28 +1694,39 @@ function amalgSection() {
   const head = `<h3>Amalgamation için gemstone planı</h3>
     <p class="small">${p.busy == null
       ? `Forge bilgisi henüz çekilmedi, ${p.slots} slotun hepsi boş sayıldı. Dolu slotları düşmek için "Sack'lerden çek".`
-      : `${p.slots} slotun ${p.busy} tanesi dolu (son çekim), <b>${p.free} boş slot</b> için hesaplandı.`}</p>`;
+      : `${p.slots} slotun ${p.busy} tanesi dolu (son çekim${p.done ? `; bitmiş ${p.done} forge boş sayıldı` : ''}), <b>${p.free} boş slot</b> için hesaplandı.`}</p>`;
   if (!p.free) return `<div class="amalg">${head}<p class="muted small">Boş slot yok.</p></div>`;
-  const rows = p.gems.map((x) => {
-    const craftTxt = x.craft
-      ? `${fmtN(x.craft)} Fine craftla<br><span class="muted small">${fmtN(x.useFlawed)} Flawed${x.craftFlawed ? ` + ${fmtN(x.useRough)} Rough → ${fmtN(x.craftFlawed)} Flawed` : ''}</span>`
-      : '—';
-    return `<tr><td>${esc(anyName(x.id))}</td><td class="num">${fmtN(x.need)}</td><td class="num">${fmtN(x.fine)}</td>
-      <td class="num small">${fmtN(x.flawed)} / ${fmtN(x.rough)}</td><td>${craftTxt}</td>
-      <td class="num"><b>${fmtN(x.buy)}</b></td><td class="num">${x.buy ? coins(x.unit) : '—'}</td><td class="num">${coins(x.cost)}</td></tr>`;
-  }).join('');
+  const gem = (x) => esc(anyName(x.id).replace(/^Fine /, ''));
+  // Plain steps first (what is enough, what to craft, what to buy), the full table folded below.
+  const enough = p.gems.filter((x) => !x.craft && !x.buy);
+  const crafts = p.gems.filter((x) => x.craft);
+  const buys = p.gems.filter((x) => x.buy);
+  const craftLine = (x) => {
+    const steps = [];
+    if (x.craftFlawed) steps.push(`${fmtN(x.useRough)} Rough → ${fmtN(x.craftFlawed)} Flawed`);
+    steps.push(`${fmtN(x.craft * 80)} Flawed → ${fmtN(x.craft)} Fine`);
+    return `<li><b>${fmtN(x.craft)} Fine ${gem(x)}</b> <span class="muted small">(${steps.join(', sonra ')})</span></li>`;
+  };
   const glNeed = p.glacitePer * p.free;
-  const glLine = p.enchHave >= glNeed
-    ? `Enchanted Glacite yeterli: ${fmtN(glNeed)} gerekli, sende ${fmtN(p.enchHave)} var.`
-    : `<span class="warn">Enchanted Glacite yetmiyor: ${fmtN(glNeed)} gerekli, sende ${fmtN(p.enchHave)} var (${fmtN(Math.floor(p.enchHave / p.glacitePer))} Amalgamation'a yeter).</span>`;
-  return `<div class="amalg">${head}
+  const glOk = p.enchHave >= glNeed;
+  const steps = `<ol class="amalg-steps">
+      <li><b>Sende olan Fine (sahip/gerekli):</b> ${p.gems.map((x) => `${gem(x)} ${fmtN(x.fine)}/${fmtN(x.need)}${enough.includes(x) ? ' ✓' : ''}`).join(', ')}${glOk ? ` · Enchanted Glacite ${fmtN(p.enchHave)}/${fmtN(glNeed)} ✓` : ''}</li>
+      <li><b>Craftla:</b> ${crafts.length ? `<ul>${crafts.map(craftLine).join('')}</ul>` : 'craftlanacak gem yok.'}</li>
+      <li><b>Satın al:</b> ${buys.length
+        ? `<ul>${buys.map((x) => `<li><b>${fmtN(x.buy)} Fine ${gem(x)}</b> <span class="muted small">(${coins(x.unit)}/adet → ${coins(x.cost)})</span></li>`).join('')}</ul>Toplam: <b>${coins(p.cost)}</b>`
+        : 'hiçbir şey almana gerek yok.'}</li>
+      ${glOk ? '' : `<li class="warn"><b>Enchanted Glacite yetmiyor:</b> ${fmtN(glNeed)} gerekli, sende ${fmtN(p.enchHave)} var (${fmtN(Math.floor(p.enchHave / p.glacitePer))} Amalgamation'a yeter).</li>`}
+    </ol>`;
+  const rows = p.gems.map((x) => `<tr><td>${gem(x)}</td><td class="num">${fmtN(x.need)}</td><td class="num">${fmtN(x.fine)}</td>
+      <td class="num">${fmtN(x.flawed)}</td><td class="num">${fmtN(x.rough)}</td><td class="num">${x.craft ? fmtN(x.craft) : '—'}</td>
+      <td class="num"><b>${x.buy ? fmtN(x.buy) : '—'}</b></td></tr>`).join('');
+  return `<div class="amalg">${head}${steps}
+    <details><summary class="small">Ayrıntılı tablo</summary>
     <div class="table-wrap"><table><thead><tr>
-      <th>Gemstone</th><th class="num" title="Boş slot × tarifteki adet.">Gerekli</th><th class="num">Sende (Fine)</th>
-      <th class="num" title="Sende olan Flawed / Rough.">Flawed / Rough</th><th>Craftla</th>
-      <th class="num">Satın al</th><th class="num" title="Seçili alış yöntemiyle 1 Fine.">Birim</th><th class="num">Maliyet</th>
-    </tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="small">Satın alma toplamı: <b>${coins(p.cost)}</b>. ${glLine}</p>
-    <p class="muted small">Eksik Fine'lar önce sendeki Flawed'dan (80 Flawed = 1 Fine), Flawed yetmezse Rough'tan (80 Rough = 1 Flawed) craftlanır; tam craft olmayan kısım satın alınır. Flawless aşağı bölünmez. Adetler "Sack'lerden çek" ya da gemstone tablosundaki girişlerden gelir.</p>
+      <th>Gem</th><th class="num" title="Boş slot × tarifteki adet (Fine).">Gerekli Fine</th><th class="num">Sendeki Fine</th>
+      <th class="num">Sendeki Flawed</th><th class="num">Sendeki Rough</th><th class="num">Craftlanacak Fine</th><th class="num">Alınacak Fine</th>
+    </tr></thead><tbody>${rows}</tbody></table></div></details>
+    <p class="muted small">Eksik Fine önce sendeki Flawed'dan (80 Flawed = 1 Fine), o yetmezse Rough'tan (80 Rough = 1 Flawed) craftlanır; tam craft olmayan kısım satın alınır. Fiyat seçili alış yöntemiyle.</p>
   </div>`;
 }
 
