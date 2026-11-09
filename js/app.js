@@ -1407,7 +1407,11 @@ function markDoneForges() {
 function checkForgeDone() {
   if (!S.forgeNotify || !canNotify() || Notification.permission !== 'granted') return;
   const now = Date.now();
-  const done = (S.forgeAll || []).map(forgeJob).filter((j) => j.end != null && j.end <= now && !S.forgeNotified[forgeKey(j)]);
+  // Jobs ending in the same clock minute go out as one notification: a finished job waits
+  // while another one of its minute is still running.
+  const minute = (t) => Math.floor(t / 60000);
+  const open = (S.forgeAll || []).map(forgeJob).filter((j) => j.end != null && !S.forgeNotified[forgeKey(j)]);
+  const done = open.filter((j) => j.end <= now && !open.some((o) => o.end > now && minute(o.end) === minute(j.end)));
   if (!done.length) return;
   for (const j of done) S.forgeNotified[forgeKey(j)] = 1;
   save();
