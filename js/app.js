@@ -1656,6 +1656,8 @@ function perfectRoute(label, product, inputs, stages) {
 // Fills every free forge slot with one Glacite Amalgamation: the Fine gems it needs are taken from
 // what is held, the shortfall is crafted up from held Flawed (and Rough, 80 → 1 each step) as far as
 // full crafts allow, and only the rest is bought. Slots busy in the last pull are not counted.
+// Slot count typed in the plan; null = use the free slots. Not saved, so a new visit starts on free slots.
+let amalgSlotsManual = null;
 function amalgPlan() {
   const r = forgeRecipe('GLACITE_AMALGAMATION');
   if (!r) return null;
@@ -1665,7 +1667,8 @@ function amalgPlan() {
   const all = S.forgeAll ? S.forgeAll.map(forgeJob) : null;
   const busy = all ? all.filter((j) => j.end == null || j.end > now).length : null;
   const done = all ? all.length - busy : 0;
-  const free = Math.max(0, slots - (busy || 0));
+  const freeAuto = Math.max(0, slots - (busy || 0));
+  const free = amalgSlotsManual ?? freeAuto;
   const gems = r.inputs.filter((i) => isGem(i.id, 'FINE')).map((i) => {
     const t = i.id.match(/^FINE_([A-Z]+)_GEM$/)[1];
     const h = S.gemHold[t] || {};
@@ -1689,7 +1692,7 @@ function amalgPlan() {
   const { raw, ench } = mineHold(g);
   const enchHave = ench + Math.floor(raw / enchRatio(g));
   const cost = gems.some((x) => x.cost == null) ? null : gems.reduce((a, x) => a + x.cost, 0);
-  return { slots, busy, done, free, gems, cost, glacitePer: glacite?.count || 0, enchHave };
+  return { slots, busy, done, free, freeAuto, manual: amalgSlotsManual != null, gems, cost, glacitePer: glacite?.count || 0, enchHave };
 }
 
 function amalgSection() {
@@ -1698,8 +1701,10 @@ function amalgSection() {
   const head = `<h3>Amalgamation için gemstone planı</h3>
     <p class="small">${p.busy == null
       ? `Forge bilgisi henüz çekilmedi, ${p.slots} slotun hepsi boş sayıldı. Dolu slotları düşmek için "Sack'lerden çek".`
-      : `${p.slots} slotun ${p.busy} tanesi dolu (son çekim${p.done ? `; bitmiş ${p.done} forge boş sayıldı` : ''}), <b>${p.free} boş slot</b> için hesaplandı.`}</p>`;
-  if (!p.free) return `<div class="amalg">${head}<p class="muted small">Boş slot yok.</p></div>`;
+      : `${p.slots} slotun ${p.busy} tanesi dolu (son çekim${p.done ? `; bitmiş ${p.done} forge boş sayıldı` : ''}), <b>${p.freeAuto} boş slot</b> var.`}</p>
+    <div class="controls"><label>Kaç slot için hesaplansın <input type="number" min="0" max="20" step="1" data-amalg-slots placeholder="${p.freeAuto}" value="${p.manual ? p.free : ''}"></label>
+      <span class="muted small">${p.manual ? `Elle ${p.free} slot seçili; boş bırakınca boş slot sayısına (${p.freeAuto}) döner.` : 'Boş bırakırsan boş slot sayısı kullanılır.'}</span></div>`;
+  if (!p.free) return `<div class="amalg">${head}<p class="muted small">${p.manual ? '0 slot seçili.' : 'Boş slot yok; yukarıdan elle slot sayısı seçebilirsin.'}</p></div>`;
   const gem = (x) => esc(anyName(x.id).replace(/^Fine /, ''));
   // Plain steps first (what is enough, what to craft, what to buy), the full table folded below.
   const enough = p.gems.filter((x) => !x.craft && !x.buy);
@@ -2123,6 +2128,7 @@ function wire() {
     if (d.mine) S.mine[d.mine] = { ...S.mine[d.mine], [d.k]: Math.max(0, Math.floor(Number(el.value) || 0)) };
     else if (d.route) S.mineRoute[d.route] = el.value;
     else if (d.mineTotal) S.mineInTotal[d.mineTotal] = el.checked;
+    else if ('amalgSlots' in d) amalgSlotsManual = el.value === '' ? null : Math.max(0, Math.floor(Number(el.value) || 0));
     else return;
     save(); renderMine();
   });
