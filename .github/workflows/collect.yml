@@ -43,6 +43,10 @@ jobs:
       - name: Take price snapshot
         run: node scripts/collect.mjs data-branch
 
+      # Unit values for the Mining-Profit-Calc mod, same rules as the Mining tab.
+      - name: Build mod values
+        run: node scripts/mod-values.mjs data-branch
+
       - name: Publish data branch
         run: |
           cd data-branch
