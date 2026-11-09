@@ -1224,6 +1224,7 @@ async function renderSellCraft() {
 // Every mined material in one tab: amounts come from the sacks (or are typed), each material shows
 // its routes (sell raw / Enchanted, forge into a key, Refined, Plate…), and the bottom adds up the
 // route chosen for every material ticked for the total.
+// scripts/mod-values.mjs repeats these rules for the Minecraft mod: change it together with them.
 const MINE = [
   // noSell: selling raw or Enchanted isn't realistic in bulk, so only the forge/craft routes are
   // offered, and what is left over after the last full forge stays with you (counted as 0).
