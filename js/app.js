@@ -1656,7 +1656,11 @@ function amalgPlan() {
   const r = forgeRecipe('GLACITE_AMALGAMATION');
   if (!r) return null;
   const { slots } = effective();
-  const busy = S.forgeAll ? S.forgeAll.length : null;
+  // A job whose end time has passed counts as free: it is collected and the slot refilled.
+  const now = Date.now();
+  const all = S.forgeAll ? S.forgeAll.map(forgeJob) : null;
+  const busy = all ? all.filter((j) => j.end == null || j.end > now).length : null;
+  const done = all ? all.length - busy : 0;
   const free = Math.max(0, slots - (busy || 0));
   const gems = r.inputs.filter((i) => isGem(i.id, 'FINE')).map((i) => {
     const t = i.id.match(/^FINE_([A-Z]+)_GEM$/)[1];
@@ -1681,7 +1685,7 @@ function amalgPlan() {
   const { raw, ench } = mineHold(g);
   const enchHave = ench + Math.floor(raw / enchRatio(g));
   const cost = gems.some((x) => x.cost == null) ? null : gems.reduce((a, x) => a + x.cost, 0);
-  return { slots, busy, free, gems, cost, glacitePer: glacite?.count || 0, enchHave };
+  return { slots, busy, done, free, gems, cost, glacitePer: glacite?.count || 0, enchHave };
 }
 
 function amalgSection() {
@@ -1690,7 +1694,7 @@ function amalgSection() {
   const head = `<h3>Amalgamation için gemstone planı</h3>
     <p class="small">${p.busy == null
       ? `Forge bilgisi henüz çekilmedi, ${p.slots} slotun hepsi boş sayıldı. Dolu slotları düşmek için "Sack'lerden çek".`
-      : `${p.slots} slotun ${p.busy} tanesi dolu (son çekim), <b>${p.free} boş slot</b> için hesaplandı.`}</p>`;
+      : `${p.slots} slotun ${p.busy} tanesi dolu (son çekim${p.done ? `; bitmiş ${p.done} forge boş sayıldı` : ''}), <b>${p.free} boş slot</b> için hesaplandı.`}</p>`;
   if (!p.free) return `<div class="amalg">${head}<p class="muted small">Boş slot yok.</p></div>`;
   const rows = p.gems.map((x) => {
     const craftTxt = x.craft
