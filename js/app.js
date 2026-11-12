@@ -26,6 +26,7 @@ const DEFAULTS = {
   scMarket: 'all', scSort: 'diff', scNpc: true, scOnlyCraft: false, scHideMissing: true,
   scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', gemHold: {}, gemCountLow: false,
   metalOwnPlates: false,
+  refHold: {}, // held Refined Tungsten/Umber and Tungsten/Umber Plate for the "sell or Plate" calculator
   mine: null, mineRoute: {}, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
   sackFetch: null, // { profile, sig, changedAt, items, fetchedAt }: the last pull from the sacks
   forging: null, // [{ id, slot, start }]: mining-route items in the forge at the last sack pull
@@ -1740,6 +1741,119 @@ function amalgSection() {
   </div>`;
 }
 
+// Held Refined Tungsten/Umber (and ready plates): sell as they are, forge into Plates and sell, or
+// go on to Perfect Plate (Mithril Plate bought). Glacite Amalgamation is counted as bought.
+const REF_METALS = [
+  { name: 'Tungsten', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE' },
+  { name: 'Umber', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE' },
+];
+const refHeld = (id) => Math.max(0, Math.floor(Number(S.refHold?.[id]) || 0));
+function refinedPlan() {
+  const pp = forgeRecipe('PERFECT_PLATE');
+  const { slots, qfLevel } = effective();
+  const k = 1 - qfPercent(qfLevel) / 100;
+  // Jobs of one stage spread over the slots, stages run one after another.
+  const wall = (stages) => stages.reduce((t, [jobs, sec]) => t + (jobs ? Math.ceil(jobs / Math.max(1, slots)) * sec * k : 0), 0);
+  const metals = REF_METALS.map((m) => {
+    const r = forgeRecipe(m.plate);
+    const per = r?.inputs.find((i) => i.id === m.refined)?.count || 4;
+    const ex = r ? r.inputs.filter((i) => i.id !== m.refined).map((i) => ({ id: i.id, count: i.count, unit: marketBuy(i.id).unit })) : [];
+    const exUnit = ex.some((i) => i.unit == null) ? null : ex.reduce((t, i) => t + i.unit * i.count, 0);
+    const ref = refHeld(m.refined), plates = refHeld(m.plate);
+    const make = Math.floor(ref / per), left = ref % per;
+    const refNet = marketSell(m.refined).net, plateNet = marketSell(m.plate).net;
+    // Extra coins per Plate made instead of selling its Refined.
+    const gainPer = plateNet == null || refNet == null || exUnit == null ? null : plateNet - exUnit - per * refNet;
+    return { ...m, r, per, ex, exUnit, ref, plates, make, left, refNet, plateNet, gainPer };
+  });
+  const sum = (xs) => (xs.some((x) => x == null) ? null : xs.reduce((a, b) => a + b, 0));
+  const plateSec = metals[0].r?.duration || 10800;
+  const routes = [];
+  routes.push({
+    label: 'Olduğu gibi sat',
+    out: metals.flatMap((m) => [m.ref && `${fmtN(m.ref)}× ${anyName(m.refined)}`, m.plates && `${fmtN(m.plates)}× ${anyName(m.plate)}`]).filter(Boolean),
+    cost: 0,
+    gross: sum(metals.flatMap((m) => [m.ref ? (m.refNet == null ? null : m.ref * m.refNet) : 0, m.plates ? (m.plateNet == null ? null : m.plates * m.plateNet) : 0])),
+    sec: 0, products: metals.flatMap((m) => [m.ref && m.refined, m.plates && m.plate]).filter(Boolean),
+  });
+  const plateJobs = metals.reduce((t, m) => t + m.make, 0);
+  if (plateJobs) {
+    routes.push({
+      label: 'Plate yap, sat',
+      out: metals.flatMap((m) => [(m.make + m.plates) && `${fmtN(m.make + m.plates)}× ${anyName(m.plate)}`, m.left && `${fmtN(m.left)}× ${anyName(m.refined)} (artan, satılır)`]).filter(Boolean),
+      cost: sum(metals.map((m) => (m.make ? (m.exUnit == null ? null : m.make * m.exUnit) : 0))),
+      gross: sum(metals.flatMap((m) => [(m.make + m.plates) ? (m.plateNet == null ? null : (m.make + m.plates) * m.plateNet) : 0, m.left ? (m.refNet == null ? null : m.left * m.refNet) : 0])),
+      sec: wall([[plateJobs, plateSec]]), jobs: plateJobs, products: metals.map((m) => m.plate),
+    });
+  }
+  const [t, u] = metals;
+  const nPP = Math.min(t.make + t.plates, u.make + u.plates);
+  if (pp && nPP) {
+    const others = pp.inputs.filter((i) => i.id !== t.plate && i.id !== u.plate).map((i) => ({ id: i.id, count: i.count * nPP, unit: marketBuy(i.id).unit }));
+    const ppNet = marketSell('PERFECT_PLATE').net;
+    const plateCost = sum(metals.map((m) => (m.make ? (m.exUnit == null ? null : m.make * m.exUnit) : 0)));
+    const otherCost = sum(others.map((i) => (i.unit == null ? null : i.unit * i.count)));
+    const extra = metals.map((m) => ({ m, n: m.make + m.plates - nPP }));
+    routes.push({
+      label: 'Plate yap, Perfect Plate yap, sat',
+      out: [`${fmtN(nPP)}× Perfect Plate`, ...extra.filter((x) => x.n).map((x) => `${fmtN(x.n)}× ${anyName(x.m.plate)} (artan, satılır)`),
+        ...metals.filter((m) => m.left).map((m) => `${fmtN(m.left)}× ${anyName(m.refined)} (artan, satılır)`)],
+      buys: others,
+      cost: sum([plateCost, otherCost]),
+      gross: sum([ppNet == null ? null : nPP * ppNet, ...extra.map((x) => (x.n ? (x.m.plateNet == null ? null : x.n * x.m.plateNet) : 0)),
+        ...metals.map((m) => (m.left ? (m.refNet == null ? null : m.left * m.refNet) : 0))]),
+      sec: wall([[plateJobs, plateSec], [nPP, pp.duration]]), jobs: plateJobs + nPP, products: ['PERFECT_PLATE'],
+    });
+  }
+  for (const r of routes) r.total = r.gross == null || r.cost == null ? null : r.gross - r.cost;
+  const base = routes[0].total;
+  for (const r of routes) r.diff = r === routes[0] || r.total == null || base == null ? null : r.total - base;
+  const best = routes.filter((r) => r.total != null).sort((a, b) => b.total - a.total)[0] || null;
+  return { metals, routes, best, slots, nPP, has: metals.some((m) => m.ref || m.plates) };
+}
+
+function refinedSection() {
+  const p = refinedPlan();
+  const inputs = p.metals.map((m) => `<label>${esc(anyName(m.refined))} <input type="number" min="0" step="1" data-ref-hold="${m.refined}" value="${m.ref || ''}" placeholder="0"></label>
+      <label>${esc(anyName(m.plate))} <input type="number" min="0" step="1" data-ref-hold="${m.plate}" value="${m.plates || ''}" placeholder="0"></label>`).join('');
+  const head = `<h3>Elimdeki Refined: sat mı, Plate mi?</h3>
+    <div class="controls">${inputs}</div>`;
+  if (!p.has) return `<div class="refcalc">${head}<p class="muted small">Elindeki Refined ve Plate sayısını yaz (sack'te varsa "Sack'lerden çek" ile de dolar).</p></div>`;
+  const tr = p.routes.map((r) => {
+    const cls = r.diff == null ? '' : r.diff >= 0 ? 'pos' : 'neg';
+    const hours = r.sec / 3600;
+    const buys = r.buys?.length ? `<br><span class="muted small">Alınır: ${r.buys.map((i) => `${fmtN(i.count)}× ${esc(anyName(i.id))} (${coins(i.unit)})`).join(', ')}</span>` : '';
+    return `<tr>
+      <td>${esc(r.label)}${r === p.best ? ' <span class="tag pos">En kârlı</span>' : ''}${r.products.map(thinTag).join('')}</td>
+      <td class="small">${r.out.map(esc).join('<br>')}${buys}</td>
+      <td class="num">${r.cost ? coins(r.cost) : '—'}</td>
+      <td class="num">${coins(r.gross)}</td>
+      <td class="num${r === p.best ? ' best' : ''}">${coins(r.total)}</td>
+      <td class="num ${cls}">${r.diff == null ? '—' : coins(r.diff)}</td>
+      <td class="num">${r.sec ? duration(r.sec) : '—'}</td>
+      <td class="num ${cls}">${r.diff == null || !hours ? '—' : coins(r.diff / hours)}</td>
+    </tr>`;
+  }).join('');
+  const perMetal = p.metals.filter((m) => m.gainPer != null).map((m) => `${m.name}: Plate yapmak ${m.per} Refined başına <b class="${m.gainPer >= 0 ? 'pos' : 'neg'}">${m.gainPer >= 0 ? '+' : ''}${coins(m.gainPer)}</b>`).join(' · ');
+  const amalg = p.metals[0].ex.map((i) => `${i.count}× ${esc(anyName(i.id))} ${coins(i.unit)}`).join(', ');
+  return `<div class="refcalc">${head}
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>Yol</th><th>Ne çıkar</th>
+        <th class="num" title="Satın alınan malzemeler (Glacite Amalgamation, Mithril Plate), seçili alış yöntemiyle.">Ek maliyet</th>
+        <th class="num" title="Çıkan her şeyin seçili satış yöntemiyle, vergi düşülmüş toplamı.">Satış (net)</th>
+        <th class="num" title="Satış − ek maliyet.">Toplam kazanç</th>
+        <th class="num" title="Olduğu gibi satmaya göre fazladan kazanç.">Satmaya göre</th>
+        <th class="num" title="Seçili slot sayınla ve Quick Forge indirimiyle tüm forgeların bitme süresi.">Forge süresi (${p.slots} slot)</th>
+        <th class="num" title="Fazladan kazanç ÷ forge süresi.">Fark / saat</th>
+      </tr></thead>
+      <tbody>${tr}</tbody>
+    </table></div>
+    <p class="muted small">${perMetal ? `${perMetal} (Plate satışı − ${amalg} − Refined satışı). ` : ''}`
+    + `Plate için 4 Refined + 1 Glacite Amalgamation gerekir; Amalgamation ve Mithril Plate satın alınmış sayılır. 4'e tamamlanmayan Refined ve Perfect Plate'e eşi olmayan Plate satılmış sayılır. Bazaar satışından %${S.bzTax} vergi düşüldü.</p>
+  </div>`;
+}
+
 function perfectSection() {
   const pp = forgeRecipe('PERFECT_PLATE'), sk = forgeRecipe('SKELETON_KEY');
   if (!pp || !sk) return '';
@@ -1770,7 +1884,7 @@ function perfectSection() {
     </tr>`;
   }).join('');
   const diff = cheaper ? Math.abs(viaPerfect.cost - viaPlates.cost) : null;
-  return `<h3>Perfect Plate ve Skeleton Key</h3>
+  return `${refinedSection()}<h3>Perfect Plate ve Skeleton Key</h3>
     <div class="table-wrap"><table>
       <thead><tr>
         <th>Yol</th><th>Malzemeler</th>
@@ -1880,6 +1994,8 @@ async function fetchSacks() {
     for (const t of new Set([...Object.keys(S.gemHold), ...Object.keys(hold)])) {
       S.gemHold[t] = { target: S.gemHold[t]?.target, ...hold[t] };
     }
+    // Refined and plates only when the sacks hold that item at all, so typed amounts aren't wiped.
+    for (const m of REF_METALS) for (const id of [m.refined, m.plate]) if (id in sacks) S.refHold = { ...S.refHold, [id]: sacks[id] || 0 };
     const got = [];
     for (const m of MINE) {
       const raw = sacks[m.raw] || 0, ench = m.ench ? sacks[m.ench] || 0 : 0;
@@ -2129,6 +2245,7 @@ function wire() {
     if (d.mine) S.mine[d.mine] = { ...S.mine[d.mine], [d.k]: Math.max(0, Math.floor(Number(el.value) || 0)) };
     else if (d.route) S.mineRoute[d.route] = el.value;
     else if (d.mineTotal) S.mineInTotal[d.mineTotal] = el.checked;
+    else if (d.refHold) S.refHold = { ...S.refHold, [d.refHold]: Math.max(0, Math.floor(Number(el.value) || 0)) };
     else if ('amalgSlots' in d) amalgSlotsManual = el.value === '' ? null : Math.max(0, Math.floor(Number(el.value) || 0));
     else return;
     save(); renderMine();

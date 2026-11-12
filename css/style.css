@@ -147,5 +147,5 @@ td.dim { opacity: .5; }
   padding: 8px 10px; font-size: 12px; color: var(--text-primary); white-space: pre-line;
   box-shadow: 0 4px 16px rgba(0, 0, 0, .5);
 }
-.amalg { margin-top: 16px; }
+.amalg, .refcalc { margin-top: 16px; }
 .amalg-steps { padding-left: 20px; margin: 8px 0; } .amalg-steps li { margin: 4px 0; } .amalg-steps ul { margin: 2px 0; padding-left: 18px; }
