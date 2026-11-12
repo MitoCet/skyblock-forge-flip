@@ -573,11 +573,15 @@ function readNbt(bytes) {
   return payload(type);
 }
 const PET_TIERS = ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY', 'MYTHIC'];
-function auctionItem(b64) {
+// Base64 gzip NBT (AH item_bytes and the profile's inventory blobs) -> list of item compounds in "i".
+function nbtList(b64) {
   const bin = atob(b64);
   const raw = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) raw[i] = bin.charCodeAt(i);
-  const item = readNbt(window.pako.ungzip(raw))?.i?.[0];
+  return readNbt(window.pako.ungzip(raw))?.i || [];
+}
+function auctionItem(b64) {
+  const item = nbtList(b64)[0];
   const ea = item?.tag?.ExtraAttributes;
   if (!ea?.id) return null;
   let id = ea.id;
@@ -1826,7 +1830,7 @@ function refinedSection() {
       <label>${esc(anyName(m.plate))} <input type="number" min="0" step="1" data-ref-hold="${m.plate}" value="${m.plates || ''}" placeholder="0"></label>`).join('');
   const head = `<h3>Elimdeki Refined: sat mı, Plate mi?</h3>
     <div class="controls">${inputs}</div>`;
-  if (!p.has) return `<div class="refcalc">${head}<p class="muted small">Elindeki Refined ve Plate sayısını yaz (sack'te varsa "Sack'lerden çek" ile de dolar).</p></div>`;
+  if (!p.has) return `<div class="refcalc">${head}<p class="muted small">Elindeki Refined ve Plate sayısını yaz ("Sack'lerden çek" sack, envanter, ender chest ve storage'dakileri de sayar).</p></div>`;
   const tr = p.routes.map((r) => {
     const cls = r.diff == null ? '' : r.diff >= 0 ? 'pos' : 'neg';
     const hours = r.sec / 3600;
@@ -1974,6 +1978,40 @@ function renderSackStatus() {
   status.textContent = `${f.profile} profilinin sack'lerinden alındı: ${f.items.join(', ') || 'hiçbir şey bulunamadı'}. Çekildi: ${fmtWhen(f.fetchedAt)}${same}`;
 }
 
+// Counts the given item ids in the profile's inventory, ender chest, storage backpacks and personal vault
+// (base64 gzip NBT blobs, same layout NEU's profile viewer and SkyCrypt read). Null when none is readable
+// (Inventory API off). Returns per-id totals and where they were found.
+const HELD_PLACES = [['envanter', 'inv_contents'], ['ender chest', 'ender_chest_contents'], ['storage', 'backpack_contents'], ['personal vault', 'personal_vault_contents']];
+async function readHeld(inv, ids) {
+  if (!inv?.inv_contents?.data) return null;
+  if (!window.pako) await loadScript('https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js');
+  const want = new Set(ids), count = {}, where = {};
+  for (const [place, key] of HELD_PLACES) {
+    const v = inv[key];
+    const blobs = key === 'backpack_contents' ? Object.values(v || {}) : [v];
+    for (const b of blobs) {
+      if (!b?.data) continue;
+      let list;
+      try { list = nbtList(b.data); } catch (err) { console.error(place, err); continue; }
+      for (const it of list) {
+        const id = it?.tag?.ExtraAttributes?.id;
+        if (!want.has(id)) continue;
+        const n = it.Count || 1;
+        count[id] = (count[id] || 0) + n;
+        where[place] = (where[place] || 0) + n;
+      }
+    }
+  }
+  return { count, where };
+}
+// Status piece for the Refined/Plate amounts: how many and where they were found.
+function refHoldNote(ids, sacks, held) {
+  if (!held) return null;
+  const inSacks = ids.reduce((t, id) => t + (sacks[id] || 0), 0);
+  const parts = [inSacks && `${fmtN(inSacks)} sack`, ...Object.entries(held.where).map(([p, n]) => `${fmtN(n)} ${p}`)].filter(Boolean);
+  return parts.length ? `Refined/Plate (${parts.join(', ')})` : 'Refined/Plate yok (sack, envanter, ender chest, storage)';
+}
+
 // Fills the mined amounts and the gemstone holdings from the player's sacks.
 async function fetchSacks() {
   const btn = $('#mineSackBtn'), status = $('#mineSackStatus');
@@ -2002,8 +2040,15 @@ async function fetchSacks() {
     for (const t of new Set([...Object.keys(S.gemHold), ...Object.keys(hold)])) {
       S.gemHold[t] = { target: S.gemHold[t]?.target, ...hold[t] };
     }
-    // Refined and plates only when the sacks hold that item at all, so typed amounts aren't wiped.
-    for (const m of REF_METALS) for (const id of [m.refined, m.plate]) if (id in sacks) S.refHold = { ...S.refHold, [id]: sacks[id] || 0 };
+    // Refined and plates aren't sack items: count them in the inventory, ender chest, storage backpacks
+    // and personal vault too. If those blobs can't be read, fall back to sacks only (and only when the
+    // sacks hold the item at all, so typed amounts aren't wiped).
+    const refIds = REF_METALS.flatMap((m) => [m.refined, m.plate]);
+    const held = await readHeld(member?.inventory, refIds);
+    for (const id of refIds) {
+      if (held) S.refHold = { ...S.refHold, [id]: (sacks[id] || 0) + (held.count[id] || 0) };
+      else if (id in sacks) S.refHold = { ...S.refHold, [id]: sacks[id] || 0 };
+    }
     const got = [];
     for (const m of MINE) {
       const raw = sacks[m.raw] || 0, ench = m.ench ? sacks[m.ench] || 0 : 0;
@@ -2016,7 +2061,7 @@ async function fetchSacks() {
       sig,
       // When the contents were first seen as they are now (an earlier pull of the same profile).
       changedAt: prev && prev.sig === sig && prev.profile === p.cute_name ? prev.changedAt || prev.fetchedAt : now,
-      items: [...got, gems ? `${gems.toLocaleString('tr-TR')} gemstone` : null,
+      items: [...got, gems ? `${gems.toLocaleString('tr-TR')} gemstone` : null, refHoldNote(refIds, sacks, held),
         S.forging.length ? `forgede ${S.forging.length} item` : null].filter(Boolean),
       fetchedAt: now,
     };
