@@ -57,7 +57,7 @@ function bestSale(id) {
 const MINE = [
   { id: 'TUNGSTEN', noSell: true, raw: 'TUNGSTEN', ench: 'ENCHANTED_TUNGSTEN', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE', key: 'TUNGSTEN_KEY' },
   { id: 'UMBER', noSell: true, raw: 'UMBER', ench: 'ENCHANTED_UMBER', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE', key: 'UMBER_KEY' },
-  { id: 'GLACITE', raw: 'GLACITE', ench: 'ENCHANTED_GLACITE', refined: 'GLACITE_AMALGAMATION' },
+  { id: 'GLACITE', raw: 'GLACITE', ench: 'ENCHANTED_GLACITE', refined: 'GLACITE_AMALGAMATION', preferRefined: true },
   { id: 'MITHRIL', raw: 'MITHRIL_ORE', ench: 'ENCHANTED_MITHRIL', refined: 'REFINED_MITHRIL' },
   { id: 'TITANIUM', raw: 'TITANIUM_ORE', ench: 'ENCHANTED_TITANIUM', refined: 'REFINED_TITANIUM' },
   { id: 'HARD_STONE', noSell: true, raw: 'HARD_STONE', ench: 'ENCHANTED_HARD_STONE', craftUp: 'CONCENTRATED_STONE' },
@@ -80,7 +80,9 @@ function extraCost(r, skip) {
   }
   return t;
 }
-// Net coins per Enchanted piece on every route of metalRoutes; returns the best.
+// Net coins per Enchanted piece on every route of metalRoutes; returns the best, or for
+// preferRefined (Glacite, Mito 2026-11-12, like the site's Glacite card) always the forge route
+// (Amalgamation) when it has a price, even if another route pays more.
 function bestPerEnch(m) {
   const ratio = enchRatio(m);
   const routes = [];
@@ -112,6 +114,10 @@ function bestPerEnch(m) {
       const ps = marketSell(m.plate), ex2 = extraCost(plateR, m.refined);
       if (ps != null && ex2 != null) routes.push(['plate', (ps * plateR.count - ex2 - ex * perPlate) / (refPer * perPlate)]);
     }
+  }
+  if (m.preferRefined) {
+    const forge = routes.find((r) => r[0] === 'refined');
+    if (forge) return forge;
   }
   return routes.reduce((b, r) => (!b || r[1] > b[1] ? r : b), null);
 }
