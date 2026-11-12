@@ -1230,7 +1230,7 @@ const MINE = [
   // offered, and what is left over after the last full forge stays with you (counted as 0).
   { id: 'TUNGSTEN', noSell: true, name: 'Tungsten', raw: 'TUNGSTEN', ench: 'ENCHANTED_TUNGSTEN', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE', key: 'TUNGSTEN_KEY' },
   { id: 'UMBER', noSell: true, name: 'Umber', raw: 'UMBER', ench: 'ENCHANTED_UMBER', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE', key: 'UMBER_KEY' },
-  { id: 'GLACITE', name: 'Glacite', raw: 'GLACITE', ench: 'ENCHANTED_GLACITE', refined: 'GLACITE_AMALGAMATION', refLabel: 'Glacite Amalgamation' },
+  { id: 'GLACITE', name: 'Glacite', raw: 'GLACITE', ench: 'ENCHANTED_GLACITE', refined: 'GLACITE_AMALGAMATION', refLabel: 'Glacite Amalgamation', preferRefined: true },
   { id: 'MITHRIL', name: 'Mithril', raw: 'MITHRIL_ORE', ench: 'ENCHANTED_MITHRIL', refined: 'REFINED_MITHRIL' },
   { id: 'TITANIUM', name: 'Titanium', raw: 'TITANIUM_ORE', ench: 'ENCHANTED_TITANIUM', refined: 'REFINED_TITANIUM' },
   { id: 'HARD_STONE', noSell: true, name: 'Hard Stone', raw: 'HARD_STONE', ench: 'ENCHANTED_HARD_STONE', craftUp: 'CONCENTRATED_STONE' },
@@ -1346,9 +1346,17 @@ function mineCalc(m) {
     return r;
   });
   const best = rows.reduce((b, r) => (r.total != null && (r.n > 0 || r.product === m.ench) && (!b || r.total > b.total) ? r : b), null);
-  const chosen = rows.find((r) => r.label === S.mineRoute[m.id]) || best;
+  // preferRefined (Glacite, Mito 2026-11-12): the selected route is always the forge route
+  // (Amalgamation) even when another row is tagged "En kârlı"; a click on another route only lasts
+  // until the page is reloaded (not saved).
+  const pick = m.preferRefined ? mineRouteView[m.id] : S.mineRoute[m.id];
+  const chosen = rows.find((r) => r.label === pick)
+    || (m.preferRefined && rows.find((r) => r.product === m.refined && r.total != null && r.n > 0)) || best;
   return { raw, ench, whole, rawLeft, rows, best, chosen, has: raw > 0 || ench > 0 };
 }
+
+// Route clicks for preferRefined materials, kept only for this page view.
+const mineRouteView = {};
 
 const inTotal = (id) => S.mineInTotal[id] !== false;
 
@@ -2127,7 +2135,10 @@ function wire() {
   $('#tab-mine').addEventListener('change', (ev) => {
     const el = ev.target, d = el.dataset;
     if (d.mine) S.mine[d.mine] = { ...S.mine[d.mine], [d.k]: Math.max(0, Math.floor(Number(el.value) || 0)) };
-    else if (d.route) S.mineRoute[d.route] = el.value;
+    else if (d.route) {
+      if (MINE.find((m) => m.id === d.route)?.preferRefined) mineRouteView[d.route] = el.value;
+      else S.mineRoute[d.route] = el.value;
+    }
     else if (d.mineTotal) S.mineInTotal[d.mineTotal] = el.checked;
     else if ('amalgSlots' in d) amalgSlotsManual = el.value === '' ? null : Math.max(0, Math.floor(Number(el.value) || 0));
     else return;
