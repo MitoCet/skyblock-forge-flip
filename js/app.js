@@ -1243,6 +1243,19 @@ const MINE = [
   { id: 'REFINED_MINERAL', name: 'Refined Mineral', raw: 'REFINED_MINERAL', simple: true, view: 'OTHER' },
   { id: 'GLOSSY_GEMSTONE', name: 'Glossy Gemstone', raw: 'GLOSSY_GEMSTONE', simple: true, view: 'OTHER' },
   { id: 'SUSPICIOUS_SCRAP', name: 'Suspicious Scrap', raw: 'SUSPICIOUS_SCRAP', simple: true, view: 'OTHER' },
+  // Classic ores (Mito, 2026-11-13): only sold as Enchanted Block (`top`; Obsidian has no block, so
+  // Enchanted Obsidian). What doesn't make a full block stays with you, like Tungsten/Umber.
+  ...[
+    ['COAL', 'Coal', 'COAL', 'ENCHANTED_COAL', 'ENCHANTED_COAL_BLOCK'],
+    ['IRON', 'Iron', 'IRON_INGOT', 'ENCHANTED_IRON', 'ENCHANTED_IRON_BLOCK'],
+    ['GOLD', 'Gold', 'GOLD_INGOT', 'ENCHANTED_GOLD', 'ENCHANTED_GOLD_BLOCK'],
+    ['DIAMOND', 'Diamond', 'DIAMOND', 'ENCHANTED_DIAMOND', 'ENCHANTED_DIAMOND_BLOCK'],
+    ['LAPIS', 'Lapis', 'INK_SACK:4', 'ENCHANTED_LAPIS_LAZULI', 'ENCHANTED_LAPIS_LAZULI_BLOCK'],
+    ['REDSTONE', 'Redstone', 'REDSTONE', 'ENCHANTED_REDSTONE', 'ENCHANTED_REDSTONE_BLOCK'],
+    ['EMERALD', 'Emerald', 'EMERALD', 'ENCHANTED_EMERALD', 'ENCHANTED_EMERALD_BLOCK'],
+    ['QUARTZ', 'Quartz', 'QUARTZ', 'ENCHANTED_QUARTZ', 'ENCHANTED_QUARTZ_BLOCK'],
+    ['OBSIDIAN', 'Obsidian', 'OBSIDIAN', 'ENCHANTED_OBSIDIAN', null],
+  ].map(([id, name, raw, ench, eblock]) => ({ id: `ORE_${id}`, name, noSell: true, ore: true, raw, ench, eblock, top: eblock || ench, view: 'ORE' })),
 ];
 const forgeRecipe = (id) => recipes.find((r) => r.id === id);
 const fmtAmt = (n, d = 0) => n.toLocaleString('tr-TR', { maximumFractionDigits: d });
@@ -1286,6 +1299,14 @@ function metalRoutes(m, enchAmount) {
   if (!m.noSell) {
     if (raw.net != null) rows.push(metalRoute(m, 'Ham olarak sat', m.raw, enchAmount * ratio, 0, 0, [], false));
     rows.push(metalRoute(m, 'Enchanted olarak sat', m.ench, enchAmount, 0, 0, [], false));
+  }
+
+  // Ores: one route, sold as Enchanted Block (or Enchanted when there is no block).
+  if (m.ore) {
+    const per = m.top === m.ench ? 1 : craftsBy.get(m.top)?.find((x) => x.inputs.length === 1 && x.inputs[0].id === m.ench)?.inputs[0].count || 160;
+    const n = Math.floor(enchAmount / per);
+    rows.push({ ...metalRoute(m, `${anyName(m.top)} olarak sat`, m.top, n, 0, enchAmount - n * per, [], false), per: per > 1 ? per : undefined });
+    return rows;
   }
 
   const keyR = m.key && forgeRecipe(m.key);
@@ -2063,7 +2084,13 @@ async function fetchSacks() {
     }
     const got = [];
     for (const m of MINE) {
-      const raw = sacks[m.raw] || 0, ench = m.ench ? sacks[m.ench] || 0 : 0;
+      const raw = sacks[m.raw] || 0;
+      let ench = m.ench ? sacks[m.ench] || 0 : 0;
+      // Ores: Enchanted Blocks in the sacks count as the Enchanted they are made of.
+      if (m.ore && m.eblock && sacks[m.eblock]) {
+        const per = craftsBy.get(m.eblock)?.find((x) => x.inputs.length === 1 && x.inputs[0].id === m.ench)?.inputs[0].count || 160;
+        ench += sacks[m.eblock] * per;
+      }
       S.mine[m.id] = { raw, ench };
       if (raw || ench) got.push(m.name);
     }

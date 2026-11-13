@@ -136,10 +136,11 @@ for (const m of MINE) {
   put(m.raw, best[1] / enchRatio(m), m.id, best[0]);
 }
 
-// Classic ores (Mito, 2026-11-13): not on the site's Mining tab. One raw unit is worth the best
-// sale of any of its forms per raw unit (raw, Enchanted, Enchanted Block; Bazaar sell offer or NPC);
-// every form (also the vanilla Block and the Ore block) is worth its raw units times that, so
-// crafting between forms never changes the value. Families start with ORE_ (the mod's "Ore" heading).
+// Classic ores (Mito, 2026-11-13): sold only as Enchanted Block (Enchanted Obsidian, which has no
+// block), like the site's Ore cards (MINE in js/app.js, top). One raw unit is worth its share of
+// that sale (sell offer); every form (raw, vanilla Block, Ore block, Enchanted, Enchanted Block) is
+// worth its raw units times that, so crafting between forms never changes the value. Families
+// start with ORE_ (the mod's "Ore" heading).
 const ORES = [
   { id: 'COAL', raw: 'COAL', block: ['COAL_BLOCK', 9], ench: 'ENCHANTED_COAL', eblock: 'ENCHANTED_COAL_BLOCK' },
   { id: 'IRON', raw: 'IRON_INGOT', ore: 'IRON_ORE', block: ['IRON_BLOCK', 9], ench: 'ENCHANTED_IRON', eblock: 'ENCHANTED_IRON_BLOCK' },
@@ -157,20 +158,16 @@ function craftRatio(id, from) {
   return c ? c.inputs[0].count / c.count : 160;
 }
 for (const o of ORES) {
-  const forms = [[o.raw, 1]];
+  const enchR = craftRatio(o.ench, o.raw);
+  const forms = [[o.raw, 1], [o.ench, enchR]];
   if (o.ore) forms.push([o.ore, 1]);
   if (o.block) forms.push(o.block);
-  const enchR = craftRatio(o.ench, o.raw);
-  forms.push([o.ench, enchR]);
-  if (o.eblock) forms.push([o.eblock, enchR * craftRatio(o.eblock, o.ench)]);
-  let best = null;
-  for (const [id, units] of forms) {
-    if (id === o.ore || (o.block && id === o.block[0])) continue; // not sold as these
-    const s = bestSale(id);
-    if (s != null && (!best || s / units > best[1])) best = [id === o.raw ? 'raw' : id === o.ench ? 'ench' : 'block', s / units];
-  }
-  if (!best) continue;
-  for (const [id, units] of forms) put(id, best[1] * units, `ORE_${o.id}`, best[0]);
+  const topUnits = o.eblock ? enchR * craftRatio(o.eblock, o.ench) : enchR;
+  if (o.eblock) forms.push([o.eblock, topUnits]);
+  const sale = marketSell(o.eblock || o.ench);
+  if (sale == null) continue;
+  const perRaw = sale / topUnits;
+  for (const [id, units] of forms) put(id, perRaw * units, `ORE_${o.id}`, o.eblock ? 'eblock' : 'ench');
 }
 
 // Gemstones: one Rough is worth its share of the best of Fine or Flawless (Rough and Flawed are
