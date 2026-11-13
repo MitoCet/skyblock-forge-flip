@@ -1543,23 +1543,25 @@ function renderForging() {
   const box = $('#mineForge');
   if (!S.forging) { box.hidden = true; return; }
   box.hidden = false;
-  const jobs = forgeJobs();
+  // The card lists every forge job; only the ones on this tab's routes count towards the total.
+  const jobs = (S.forgeAll || S.forging).map(forgeJob).map((j) => ({ ...j, mine: isMineForge(j.id) }));
   if (!jobs.length) {
-    box.innerHTML = '<h3>Forgede olanlar</h3>' + forgeNotifyHtml() + '<p class="muted small">Son çekimde forgede bu sekmedeki yollarla ilgili item yoktu (Refined, Plate, anahtar, Glacite Amalgamation, Perfect Plate, Skeleton Key, Perfect gemstone).</p>';
+    box.innerHTML = '<h3>Forgede olanlar</h3>' + forgeNotifyHtml() + '<p class="muted small">Son çekimde forge boştu.</p>';
     return;
   }
-  const total = jobs.reduce((a, j) => a + (j.value ?? 0), 0);
+  const total = jobs.filter((j) => j.mine).reduce((a, j) => a + (j.value ?? 0), 0);
+  const other = jobs.some((j) => !j.mine);
   box.innerHTML = `<h3>Forgede olanlar</h3>
     <div class="table-wrap"><table><thead><tr>
       <th>Slot</th><th>Item</th>
       <th class="num" title="Seçili satış yöntemiyle, vergi düşülmüş satış. Malzemeler zaten harcandığı için tamamı kazanç sayılır.">Değer (net)</th>
       <th class="num">Bitiş</th><th class="num">Kalan</th>
     </tr></thead><tbody>
-    ${jobs.map((j) => `<tr><td>${j.slot}</td><td>${esc(anyName(j.id))}${j.count > 1 ? ` <span class="muted">×${j.count}</span>` : ''}</td>
+    ${jobs.map((j) => `<tr><td>${j.slot}</td><td>${esc(anyName(j.id))}${j.count > 1 ? ` <span class="muted">×${j.count}</span>` : ''}${j.mine ? '' : ' <span class="tag" title="Bu sekmedeki yollarla ilgili değil; toplama eklenmez.">Toplama dahil değil</span>'}</td>
       <td class="num">${coins(j.value)}</td><td class="num small">${forgeEndText(j.end)}</td><td class="num">${forgeLeft(j.end)}</td></tr>`).join('')}
     </tbody></table></div>
     ${forgeNotifyHtml()}
-    <p class="muted small">Toplam ${coins(total)} değerinde. "Sack'lerden çek" ile birlikte profilden alındı; bitiş zamanı tarif süresi ve Quick Forge seviyenle hesaplandı. Alttaki toplama "Forgedekiler" olarak eklenir.</p>`;
+    <p class="muted small">Madencilik itemleri toplam ${coins(total)} değerinde. "Sack'lerden çek" ile birlikte profilden alındı; bitiş zamanı tarif süresi ve Quick Forge seviyenle hesaplandı. Alttaki toplama "Forgedekiler" olarak eklenir.${other ? ' Bu sekmedeki yollarla ilgili olmayan itemler (ör. Portable Campfire) listede görünür ama toplama eklenmez.' : ''}</p>`;
 }
 
 function mineSection(m) {
