@@ -1753,8 +1753,9 @@ function amalgSection() {
   </div>`;
 }
 
-// Held Refined Tungsten/Umber (and ready plates): sell as they are, forge into Plates and sell, or
-// go on to Perfect Plate (Mithril Plate bought). Glacite Amalgamation is counted as bought.
+// Held Refined Tungsten/Umber: for each metal separately, sell the Refined or forge it into Plates
+// (Glacite Amalgamation bought). Then, for Tungsten and Umber together, whether turning the Plates
+// (held + made from Refined) into Perfect Plates (Mithril Plate bought) beats selling the Plates.
 const REF_METALS = [
   { name: 'Tungsten', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE' },
   { name: 'Umber', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE' },
@@ -1764,8 +1765,16 @@ function refinedPlan() {
   const pp = forgeRecipe('PERFECT_PLATE');
   const { slots, qfLevel } = effective();
   const k = 1 - qfPercent(qfLevel) / 100;
-  // Jobs of one stage spread over the slots, stages run one after another.
-  const wall = (stages) => stages.reduce((t, [jobs, sec]) => t + (jobs ? Math.ceil(jobs / Math.max(1, slots)) * sec * k : 0), 0);
+  const wall = (jobs, sec) => (jobs ? Math.ceil(jobs / Math.max(1, slots)) * sec * k : 0);
+  const sum = (xs) => (xs.some((x) => x == null) ? null : xs.reduce((a, b) => a + b, 0));
+  const val = (n, unit) => (n ? (unit == null ? null : n * unit) : 0);
+  const finish = (routes) => {
+    for (const r of routes) r.total = r.gross == null || r.cost == null ? null : r.gross - r.cost;
+    const base = routes[0].total;
+    for (const r of routes) r.diff = r === routes[0] || r.total == null || base == null ? null : r.total - base;
+    const best = routes.filter((r) => r.total != null).sort((a, b) => b.total - a.total)[0] || null;
+    return { routes, best };
+  };
   const metals = REF_METALS.map((m) => {
     const r = forgeRecipe(m.plate);
     const per = r?.inputs.find((i) => i.id === m.refined)?.count || 4;
@@ -1776,52 +1785,76 @@ function refinedPlan() {
     const refNet = marketSell(m.refined).net, plateNet = marketSell(m.plate).net;
     // Extra coins per Plate made instead of selling its Refined.
     const gainPer = plateNet == null || refNet == null || exUnit == null ? null : plateNet - exUnit - per * refNet;
-    return { ...m, r, per, ex, exUnit, ref, plates, make, left, refNet, plateNet, gainPer };
+    // Refined only: held Plates are not part of the sell-or-Plate choice.
+    const routes = [{
+      label: 'Olduğu gibi sat', out: [`${fmtN(ref)}× ${anyName(m.refined)}`], cost: 0, gross: val(ref, refNet), sec: 0, products: [m.refined],
+    }];
+    if (make) {
+      routes.push({
+        label: 'Plate yap, sat',
+        out: [`${fmtN(make)}× ${anyName(m.plate)}`, left && `${fmtN(left)}× ${anyName(m.refined)} (artan, satılır)`].filter(Boolean),
+        buys: ex.map((i) => ({ ...i, count: i.count * make })),
+        cost: val(make, exUnit), gross: sum([val(make, plateNet), val(left, refNet)]),
+        sec: wall(make, r?.duration || 10800), products: [m.plate],
+      });
+    }
+    return { ...m, r, per, ex, exUnit, ref, plates, make, left, refNet, plateNet, gainPer, ...(ref ? finish(routes) : { routes: [] }) };
   });
-  const sum = (xs) => (xs.some((x) => x == null) ? null : xs.reduce((a, b) => a + b, 0));
-  const plateSec = metals[0].r?.duration || 10800;
-  const routes = [];
-  routes.push({
-    label: 'Olduğu gibi sat',
-    out: metals.flatMap((m) => [m.ref && `${fmtN(m.ref)}× ${anyName(m.refined)}`, m.plates && `${fmtN(m.plates)}× ${anyName(m.plate)}`]).filter(Boolean),
-    cost: 0,
-    gross: sum(metals.flatMap((m) => [m.ref ? (m.refNet == null ? null : m.ref * m.refNet) : 0, m.plates ? (m.plateNet == null ? null : m.plates * m.plateNet) : 0])),
-    sec: 0, products: metals.flatMap((m) => [m.ref && m.refined, m.plates && m.plate]).filter(Boolean),
-  });
-  const plateJobs = metals.reduce((t, m) => t + m.make, 0);
-  if (plateJobs) {
-    routes.push({
-      label: 'Plate yap, sat',
-      out: metals.flatMap((m) => [(m.make + m.plates) && `${fmtN(m.make + m.plates)}× ${anyName(m.plate)}`, m.left && `${fmtN(m.left)}× ${anyName(m.refined)} (artan, satılır)`]).filter(Boolean),
-      cost: sum(metals.map((m) => (m.make ? (m.exUnit == null ? null : m.make * m.exUnit) : 0))),
-      gross: sum(metals.flatMap((m) => [(m.make + m.plates) ? (m.plateNet == null ? null : (m.make + m.plates) * m.plateNet) : 0, m.left ? (m.refNet == null ? null : m.left * m.refNet) : 0])),
-      sec: wall([[plateJobs, plateSec]]), jobs: plateJobs, products: metals.map((m) => m.plate),
-    });
-  }
+  // Perfect Plate: Tungsten and Umber together. Plates = held + made from Refined.
   const [t, u] = metals;
   const nPP = Math.min(t.make + t.plates, u.make + u.plates);
+  let perfect = null;
   if (pp && nPP) {
     const others = pp.inputs.filter((i) => i.id !== t.plate && i.id !== u.plate).map((i) => ({ id: i.id, count: i.count * nPP, unit: marketBuy(i.id).unit }));
     const ppNet = marketSell('PERFECT_PLATE').net;
-    const plateCost = sum(metals.map((m) => (m.make ? (m.exUnit == null ? null : m.make * m.exUnit) : 0)));
-    const otherCost = sum(others.map((i) => (i.unit == null ? null : i.unit * i.count)));
     const extra = metals.map((m) => ({ m, n: m.make + m.plates - nPP }));
-    routes.push({
-      label: 'Plate yap, Perfect Plate yap, sat',
-      out: [`${fmtN(nPP)}× Perfect Plate`, ...extra.filter((x) => x.n).map((x) => `${fmtN(x.n)}× ${anyName(x.m.plate)} (artan, satılır)`),
-        ...metals.filter((m) => m.left).map((m) => `${fmtN(m.left)}× ${anyName(m.refined)} (artan, satılır)`)],
-      buys: others,
-      cost: sum([plateCost, otherCost]),
-      gross: sum([ppNet == null ? null : nPP * ppNet, ...extra.map((x) => (x.n ? (x.m.plateNet == null ? null : x.n * x.m.plateNet) : 0)),
-        ...metals.map((m) => (m.left ? (m.refNet == null ? null : m.left * m.refNet) : 0))]),
-      sec: wall([[plateJobs, plateSec], [nPP, pp.duration]]), jobs: plateJobs + nPP, products: ['PERFECT_PLATE'],
-    });
+    perfect = finish([
+      {
+        label: "Plate'leri sat",
+        out: metals.filter((m) => m.make + m.plates).map((m) => `${fmtN(m.make + m.plates)}× ${anyName(m.plate)}`),
+        cost: 0, gross: sum(metals.map((m) => val(m.make + m.plates, m.plateNet))), sec: 0, products: metals.map((m) => m.plate),
+      },
+      {
+        label: 'Perfect Plate yap, sat',
+        out: [`${fmtN(nPP)}× Perfect Plate`, ...extra.filter((x) => x.n).map((x) => `${fmtN(x.n)}× ${anyName(x.m.plate)} (artan, satılır)`)],
+        buys: others,
+        cost: sum(others.map((i) => val(i.count, i.unit))),
+        gross: sum([val(nPP, ppNet), ...extra.map((x) => val(x.n, x.m.plateNet))]),
+        sec: wall(nPP, pp.duration), products: ['PERFECT_PLATE'],
+      },
+    ]);
   }
-  for (const r of routes) r.total = r.gross == null || r.cost == null ? null : r.gross - r.cost;
-  const base = routes[0].total;
-  for (const r of routes) r.diff = r === routes[0] || r.total == null || base == null ? null : r.total - base;
-  const best = routes.filter((r) => r.total != null).sort((a, b) => b.total - a.total)[0] || null;
-  return { metals, routes, best, slots, nPP, has: metals.some((m) => m.ref || m.plates) };
+  return { metals, perfect, slots, nPP, has: metals.some((m) => m.ref || m.plates) };
+}
+
+function refinedTable(plan, slots, baseTitle) {
+  const tr = plan.routes.map((r) => {
+    const cls = r.diff == null ? '' : r.diff >= 0 ? 'pos' : 'neg';
+    const hours = r.sec / 3600;
+    const buys = r.buys?.length ? `<br><span class="muted small">Alınır: ${r.buys.map((i) => `${fmtN(i.count)}× ${esc(anyName(i.id))} (${coins(i.unit)})`).join(', ')}</span>` : '';
+    return `<tr>
+      <td>${esc(r.label)}${r === plan.best ? ' <span class="tag pos">En kârlı</span>' : ''}${r.products.map(thinTag).join('')}</td>
+      <td class="small">${r.out.map(esc).join('<br>')}${buys}</td>
+      <td class="num">${r.cost ? coins(r.cost) : '—'}</td>
+      <td class="num">${coins(r.gross)}</td>
+      <td class="num${r === plan.best ? ' best' : ''}">${coins(r.total)}</td>
+      <td class="num ${cls}">${r.diff == null ? '—' : coins(r.diff)}</td>
+      <td class="num">${r.sec ? duration(r.sec) : '—'}</td>
+      <td class="num ${cls}">${r.diff == null || !hours ? '—' : coins(r.diff / hours)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>Yol</th><th>Ne çıkar</th>
+        <th class="num" title="Satın alınan malzemeler, seçili alış yöntemiyle.">Ek maliyet</th>
+        <th class="num" title="Çıkan her şeyin seçili satış yöntemiyle, vergi düşülmüş toplamı.">Satış (net)</th>
+        <th class="num" title="Satış − ek maliyet.">Toplam kazanç</th>
+        <th class="num" title="${esc(baseTitle)}">Fark</th>
+        <th class="num" title="Seçili slot sayınla ve Quick Forge indirimiyle bu forgeların bitme süresi.">Forge süresi (${slots} slot)</th>
+        <th class="num" title="Fark ÷ forge süresi.">Fark / saat</th>
+      </tr></thead>
+      <tbody>${tr}</tbody>
+    </table></div>`;
 }
 
 function refinedSection() {
@@ -1831,38 +1864,17 @@ function refinedSection() {
   const head = `<h3>Elimdeki Refined: sat mı, Plate mi?</h3>
     <div class="controls">${inputs}</div>`;
   if (!p.has) return `<div class="refcalc">${head}<p class="muted small">Elindeki Refined ve Plate sayısını yaz ("Sack'lerden çek" sack, envanter, ender chest ve storage'dakileri de sayar).</p></div>`;
-  const tr = p.routes.map((r) => {
-    const cls = r.diff == null ? '' : r.diff >= 0 ? 'pos' : 'neg';
-    const hours = r.sec / 3600;
-    const buys = r.buys?.length ? `<br><span class="muted small">Alınır: ${r.buys.map((i) => `${fmtN(i.count)}× ${esc(anyName(i.id))} (${coins(i.unit)})`).join(', ')}</span>` : '';
-    return `<tr>
-      <td>${esc(r.label)}${r === p.best ? ' <span class="tag pos">En kârlı</span>' : ''}${r.products.map(thinTag).join('')}</td>
-      <td class="small">${r.out.map(esc).join('<br>')}${buys}</td>
-      <td class="num">${r.cost ? coins(r.cost) : '—'}</td>
-      <td class="num">${coins(r.gross)}</td>
-      <td class="num${r === p.best ? ' best' : ''}">${coins(r.total)}</td>
-      <td class="num ${cls}">${r.diff == null ? '—' : coins(r.diff)}</td>
-      <td class="num">${r.sec ? duration(r.sec) : '—'}</td>
-      <td class="num ${cls}">${r.diff == null || !hours ? '—' : coins(r.diff / hours)}</td>
-    </tr>`;
+  const perMetal = p.metals.filter((m) => m.routes.length).map((m) => {
+    const amalg = m.ex.map((i) => `${i.count}× ${esc(anyName(i.id))} ${coins(i.unit)}`).join(', ');
+    const note = m.gainPer == null ? '' : `<p class="muted small">Plate yapmak ${m.per} Refined başına <b class="${m.gainPer >= 0 ? 'pos' : 'neg'}">${m.gainPer >= 0 ? '+' : ''}${coins(m.gainPer)}</b> (Plate satışı − ${amalg} − Refined satışı).</p>`;
+    return `<h4>${esc(m.name)}: Plate yapmak kârlı mı?</h4>${refinedTable(m, p.slots, 'Refined\'ı olduğu gibi satmaya göre fazladan kazanç.')}${note}`;
   }).join('');
-  const perMetal = p.metals.filter((m) => m.gainPer != null).map((m) => `${m.name}: Plate yapmak ${m.per} Refined başına <b class="${m.gainPer >= 0 ? 'pos' : 'neg'}">${m.gainPer >= 0 ? '+' : ''}${coins(m.gainPer)}</b>`).join(' · ');
-  const amalg = p.metals[0].ex.map((i) => `${i.count}× ${esc(anyName(i.id))} ${coins(i.unit)}`).join(', ');
-  return `<div class="refcalc">${head}
-    <div class="table-wrap"><table>
-      <thead><tr>
-        <th>Yol</th><th>Ne çıkar</th>
-        <th class="num" title="Satın alınan malzemeler (Glacite Amalgamation, Mithril Plate), seçili alış yöntemiyle.">Ek maliyet</th>
-        <th class="num" title="Çıkan her şeyin seçili satış yöntemiyle, vergi düşülmüş toplamı.">Satış (net)</th>
-        <th class="num" title="Satış − ek maliyet.">Toplam kazanç</th>
-        <th class="num" title="Olduğu gibi satmaya göre fazladan kazanç.">Satmaya göre</th>
-        <th class="num" title="Seçili slot sayınla ve Quick Forge indirimiyle tüm forgeların bitme süresi.">Forge süresi (${p.slots} slot)</th>
-        <th class="num" title="Fazladan kazanç ÷ forge süresi.">Fark / saat</th>
-      </tr></thead>
-      <tbody>${tr}</tbody>
-    </table></div>
-    <p class="muted small">${perMetal ? `${perMetal} (Plate satışı − ${amalg} − Refined satışı). ` : ''}`
-    + `Plate için 4 Refined + 1 Glacite Amalgamation gerekir; Amalgamation ve Mithril Plate satın alınmış sayılır. 4'e tamamlanmayan Refined ve Perfect Plate'e eşi olmayan Plate satılmış sayılır. Bazaar satışından %${S.bzTax} vergi düşüldü.</p>
+  const perfect = p.perfect
+    ? `<h4>Perfect Plate yapmak kârlı mı? (Tungsten + Umber beraber)</h4>${refinedTable(p.perfect, p.slots, "Plate'leri satmaya göre fazladan kazanç.")}
+      <p class="muted small">Plate'ler = elindeki Plate'ler + Refined'dan yapılacaklar. Forge süresi sadece Perfect Plate forge'u.</p>`
+    : `<p class="muted small">Perfect Plate için hem Tungsten hem Umber Plate gerekir (elindeki ya da Refined'dan yapılacak).</p>`;
+  return `<div class="refcalc">${head}${perMetal}${perfect}
+    <p class="muted small">Plate için 4 Refined + 1 Glacite Amalgamation gerekir; Amalgamation ve Mithril Plate satın alınmış sayılır. 4'e tamamlanmayan Refined ve Perfect Plate'e eşi olmayan Plate satılmış sayılır. Bazaar satışından %${S.bzTax} vergi düşüldü.</p>
   </div>`;
 }
 
