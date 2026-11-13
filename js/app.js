@@ -1783,18 +1783,18 @@ function refinedPlan() {
   const routes = [];
   routes.push({
     label: 'Olduğu gibi sat',
-    out: metals.flatMap((m) => [m.ref && `${fmtN(m.ref)}× ${anyName(m.refined)}`, m.plates && `${fmtN(m.plates)}× ${anyName(m.plate)}`]).filter(Boolean),
+    out: metals.filter((m) => m.ref).map((m) => `${fmtN(m.ref)}× ${anyName(m.refined)}`),
     cost: 0,
-    gross: sum(metals.flatMap((m) => [m.ref ? (m.refNet == null ? null : m.ref * m.refNet) : 0, m.plates ? (m.plateNet == null ? null : m.plates * m.plateNet) : 0])),
-    sec: 0, products: metals.flatMap((m) => [m.ref && m.refined, m.plates && m.plate]).filter(Boolean),
+    gross: sum(metals.map((m) => (m.ref ? (m.refNet == null ? null : m.ref * m.refNet) : 0))),
+    sec: 0, products: metals.filter((m) => m.ref).map((m) => m.refined),
   });
   const plateJobs = metals.reduce((t, m) => t + m.make, 0);
   if (plateJobs) {
     routes.push({
       label: 'Plate yap, sat',
-      out: metals.flatMap((m) => [(m.make + m.plates) && `${fmtN(m.make + m.plates)}× ${anyName(m.plate)}`, m.left && `${fmtN(m.left)}× ${anyName(m.refined)} (artan, satılır)`]).filter(Boolean),
+      out: metals.flatMap((m) => [m.make && `${fmtN(m.make)}× ${anyName(m.plate)}`, m.left && `${fmtN(m.left)}× ${anyName(m.refined)} (artan, satılır)`]).filter(Boolean),
       cost: sum(metals.map((m) => (m.make ? (m.exUnit == null ? null : m.make * m.exUnit) : 0))),
-      gross: sum(metals.flatMap((m) => [(m.make + m.plates) ? (m.plateNet == null ? null : (m.make + m.plates) * m.plateNet) : 0, m.left ? (m.refNet == null ? null : m.left * m.refNet) : 0])),
+      gross: sum(metals.flatMap((m) => [m.make ? (m.plateNet == null ? null : m.make * m.plateNet) : 0, m.left ? (m.refNet == null ? null : m.left * m.refNet) : 0])),
       sec: wall([[plateJobs, plateSec]]), jobs: plateJobs, products: metals.map((m) => m.plate),
     });
   }
@@ -1805,13 +1805,21 @@ function refinedPlan() {
     const ppNet = marketSell('PERFECT_PLATE').net;
     const plateCost = sum(metals.map((m) => (m.make ? (m.exUnit == null ? null : m.make * m.exUnit) : 0)));
     const otherCost = sum(others.map((i) => (i.unit == null ? null : i.unit * i.count)));
-    const extra = metals.map((m) => ({ m, n: m.make + m.plates - nPP }));
+    // Held Plates are used first; they are listed separately above the table, so the ones used here
+    // count at their sale value (what selling them would have given) to keep the routes comparable.
+    // Held Plates not needed stay separate; only extra Plates made from Refined are sold here.
+    const extra = metals.map((m) => {
+      const used = Math.min(m.plates, nPP);
+      return { m, used, n: m.make - (nPP - used) };
+    });
+    const heldCost = sum(extra.map((x) => (x.used ? (x.m.plateNet == null ? null : x.used * x.m.plateNet) : 0)));
     routes.push({
       label: 'Plate yap, Perfect Plate yap, sat',
       out: [`${fmtN(nPP)}× Perfect Plate`, ...extra.filter((x) => x.n).map((x) => `${fmtN(x.n)}× ${anyName(x.m.plate)} (artan, satılır)`),
         ...metals.filter((m) => m.left).map((m) => `${fmtN(m.left)}× ${anyName(m.refined)} (artan, satılır)`)],
       buys: others,
-      cost: sum([plateCost, otherCost]),
+      held: extra.filter((x) => x.used).map((x) => ({ id: x.m.plate, count: x.used, unit: x.m.plateNet })),
+      cost: sum([plateCost, otherCost, heldCost]),
       gross: sum([ppNet == null ? null : nPP * ppNet, ...extra.map((x) => (x.n ? (x.m.plateNet == null ? null : x.n * x.m.plateNet) : 0)),
         ...metals.map((m) => (m.left ? (m.refNet == null ? null : m.left * m.refNet) : 0))]),
       sec: wall([[plateJobs, plateSec], [nPP, pp.duration]]), jobs: plateJobs + nPP, products: ['PERFECT_PLATE'],
@@ -1834,10 +1842,11 @@ function refinedSection() {
   const tr = p.routes.map((r) => {
     const cls = r.diff == null ? '' : r.diff >= 0 ? 'pos' : 'neg';
     const hours = r.sec / 3600;
-    const buys = r.buys?.length ? `<br><span class="muted small">Alınır: ${r.buys.map((i) => `${fmtN(i.count)}× ${esc(anyName(i.id))} (${coins(i.unit)})`).join(', ')}</span>` : '';
+    const buys = (r.buys?.length ? `<br><span class="muted small">Alınır: ${r.buys.map((i) => `${fmtN(i.count)}× ${esc(anyName(i.id))} (${coins(i.unit)})`).join(', ')}</span>` : '')
+      + (r.held?.length ? `<br><span class="muted small">Elindeki Plate'ten kullanılır: ${r.held.map((i) => `${fmtN(i.count)}× ${esc(anyName(i.id))} (satış değeri ${coins(i.unit)} maliyete yazıldı)`).join(', ')}</span>` : '');
     return `<tr>
       <td>${esc(r.label)}${r === p.best ? ' <span class="tag pos">En kârlı</span>' : ''}${r.products.map(thinTag).join('')}</td>
-      <td class="small">${r.out.map(esc).join('<br>')}${buys}</td>
+      <td class="small">${r.out.length ? r.out.map(esc).join('<br>') : '—'}${buys}</td>
       <td class="num">${r.cost ? coins(r.cost) : '—'}</td>
       <td class="num">${coins(r.gross)}</td>
       <td class="num${r === p.best ? ' best' : ''}">${coins(r.total)}</td>
@@ -1846,13 +1855,15 @@ function refinedSection() {
       <td class="num ${cls}">${r.diff == null || !hours ? '—' : coins(r.diff / hours)}</td>
     </tr>`;
   }).join('');
+  const heldPlates = p.metals.filter((m) => m.plates).map((m) => `${fmtN(m.plates)}× ${esc(anyName(m.plate))}: ${coins(m.plateNet == null ? null : m.plates * m.plateNet)} (tanesi ${coins(m.plateNet)})`);
+  const heldLine = heldPlates.length ? `<p class="small"><b>Elindeki Plate'ler (ayrı):</b> ${heldPlates.join(' · ')} — satış (net). Aşağıdaki satırlara katılmaz, sadece Perfect Plate yolunda kullanılır.</p>` : '';
   const perMetal = p.metals.filter((m) => m.gainPer != null).map((m) => `${m.name}: Plate yapmak ${m.per} Refined başına <b class="${m.gainPer >= 0 ? 'pos' : 'neg'}">${m.gainPer >= 0 ? '+' : ''}${coins(m.gainPer)}</b>`).join(' · ');
   const amalg = p.metals[0].ex.map((i) => `${i.count}× ${esc(anyName(i.id))} ${coins(i.unit)}`).join(', ');
-  return `<div class="refcalc">${head}
+  return `<div class="refcalc">${head}${heldLine}
     <div class="table-wrap"><table>
       <thead><tr>
         <th>Yol</th><th>Ne çıkar</th>
-        <th class="num" title="Satın alınan malzemeler (Glacite Amalgamation, Mithril Plate), seçili alış yöntemiyle.">Ek maliyet</th>
+        <th class="num" title="Satın alınan malzemeler (Glacite Amalgamation, Mithril Plate), seçili alış yöntemiyle; Perfect Plate yolunda kullanılan elindeki Plate'lerin satış değeri de.">Ek maliyet</th>
         <th class="num" title="Çıkan her şeyin seçili satış yöntemiyle, vergi düşülmüş toplamı.">Satış (net)</th>
         <th class="num" title="Satış − ek maliyet.">Toplam kazanç</th>
         <th class="num" title="Olduğu gibi satmaya göre fazladan kazanç.">Satmaya göre</th>
@@ -1862,7 +1873,7 @@ function refinedSection() {
       <tbody>${tr}</tbody>
     </table></div>
     <p class="muted small">${perMetal ? `${perMetal} (Plate satışı − ${amalg} − Refined satışı). ` : ''}`
-    + `Plate için 4 Refined + 1 Glacite Amalgamation gerekir; Amalgamation ve Mithril Plate satın alınmış sayılır. 4'e tamamlanmayan Refined ve Perfect Plate'e eşi olmayan Plate satılmış sayılır. Bazaar satışından %${S.bzTax} vergi düşüldü.</p>
+    + `Plate için 4 Refined + 1 Glacite Amalgamation gerekir; Amalgamation ve Mithril Plate satın alınmış sayılır. 4'e tamamlanmayan Refined ve Perfect Plate'e eşi olmayan, Refined'dan yapılan Plate satılmış sayılır. Elindeki Plate'ler ayrı gösterilir; Perfect Plate yolunda önce onlar kullanılır. Bazaar satışından %${S.bzTax} vergi düşüldü.</p>
   </div>`;
 }
 
