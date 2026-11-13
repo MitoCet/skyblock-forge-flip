@@ -136,6 +136,43 @@ for (const m of MINE) {
   put(m.raw, best[1] / enchRatio(m), m.id, best[0]);
 }
 
+// Classic ores (Mito, 2026-11-13): not on the site's Mining tab. One raw unit is worth the best
+// sale of any of its forms per raw unit (raw, Enchanted, Enchanted Block; Bazaar sell offer or NPC);
+// every form (also the vanilla Block and the Ore block) is worth its raw units times that, so
+// crafting between forms never changes the value. Families start with ORE_ (the mod's "Ore" heading).
+const ORES = [
+  { id: 'COAL', raw: 'COAL', block: ['COAL_BLOCK', 9], ench: 'ENCHANTED_COAL', eblock: 'ENCHANTED_COAL_BLOCK' },
+  { id: 'IRON', raw: 'IRON_INGOT', ore: 'IRON_ORE', block: ['IRON_BLOCK', 9], ench: 'ENCHANTED_IRON', eblock: 'ENCHANTED_IRON_BLOCK' },
+  { id: 'GOLD', raw: 'GOLD_INGOT', ore: 'GOLD_ORE', block: ['GOLD_BLOCK', 9], ench: 'ENCHANTED_GOLD', eblock: 'ENCHANTED_GOLD_BLOCK' },
+  { id: 'DIAMOND', raw: 'DIAMOND', block: ['DIAMOND_BLOCK', 9], ench: 'ENCHANTED_DIAMOND', eblock: 'ENCHANTED_DIAMOND_BLOCK' },
+  { id: 'LAPIS', raw: 'INK_SACK:4', block: ['LAPIS_BLOCK', 9], ench: 'ENCHANTED_LAPIS_LAZULI', eblock: 'ENCHANTED_LAPIS_LAZULI_BLOCK' },
+  { id: 'REDSTONE', raw: 'REDSTONE', block: ['REDSTONE_BLOCK', 9], ench: 'ENCHANTED_REDSTONE', eblock: 'ENCHANTED_REDSTONE_BLOCK' },
+  { id: 'EMERALD', raw: 'EMERALD', block: ['EMERALD_BLOCK', 9], ench: 'ENCHANTED_EMERALD', eblock: 'ENCHANTED_EMERALD_BLOCK' },
+  { id: 'QUARTZ', raw: 'QUARTZ', block: ['QUARTZ_BLOCK', 4], ench: 'ENCHANTED_QUARTZ', eblock: 'ENCHANTED_QUARTZ_BLOCK' },
+  { id: 'OBSIDIAN', raw: 'OBSIDIAN', ench: 'ENCHANTED_OBSIDIAN' },
+];
+// Raw units in one piece made by a one-ingredient craft of `from` (160 when the data has no recipe).
+function craftRatio(id, from) {
+  const c = craftsBy.get(id)?.find((x) => x.inputs.length === 1 && x.inputs[0].id === from);
+  return c ? c.inputs[0].count / c.count : 160;
+}
+for (const o of ORES) {
+  const forms = [[o.raw, 1]];
+  if (o.ore) forms.push([o.ore, 1]);
+  if (o.block) forms.push(o.block);
+  const enchR = craftRatio(o.ench, o.raw);
+  forms.push([o.ench, enchR]);
+  if (o.eblock) forms.push([o.eblock, enchR * craftRatio(o.eblock, o.ench)]);
+  let best = null;
+  for (const [id, units] of forms) {
+    if (id === o.ore || (o.block && id === o.block[0])) continue; // not sold as these
+    const s = bestSale(id);
+    if (s != null && (!best || s / units > best[1])) best = [id === o.raw ? 'raw' : id === o.ench ? 'ench' : 'block', s / units];
+  }
+  if (!best) continue;
+  for (const [id, units] of forms) put(id, best[1] * units, `ORE_${o.id}`, best[0]);
+}
+
 // Gemstones: one Rough is worth its share of the best of Fine or Flawless (Rough and Flawed are
 // crafted up, like the site's "en kârlı"); Flawless held is sold as it is.
 const gemTypes = Object.keys(market.bz).map((id) => id.match(/^ROUGH_([A-Z]+)_GEM$/)?.[1]).filter(Boolean);
