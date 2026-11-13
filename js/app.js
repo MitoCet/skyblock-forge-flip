@@ -671,7 +671,7 @@ function renderLiveStatus(text) {
   document.querySelectorAll('.live-status').forEach((el) => {
     el.classList.toggle('on', !text && !!liveAt);
     el.textContent = text || (liveAt
-      ? `Anlık fiyatlar (${time}, Bazaar${market.liveAh ? ' + AH' : ''}). Kaydedilmez; sayfayı yenileyince 15 dakikalık kayda döner.`
+      ? `Anlık fiyatlar (${time}, Bazaar${market.liveAh ? ' + AH' : ''}). Kaydedilmez; yeni 15 dakikalık kayıt gelince ya da sayfa yenilenince ona döner.`
       : '');
   });
 }
@@ -694,6 +694,60 @@ async function liveClick(ev) {
     liveBusy = false;
     document.querySelectorAll('.live-btn').forEach((b) => { b.disabled = false; });
   }
+}
+
+// ---------- auto refresh ----------
+// While the tab is open, the collector's new data (every ~15 min) is loaded without a reload.
+// latest.json is small, so it is checked every 3 minutes (and when the tab becomes visible again);
+// only when its timestamp changed are the tables re-drawn. Live prices ("Güncel fiyatları çek")
+// stay until newer collector data arrives.
+const AUTO_CHECK_MS = 3 * 60 * 1000;
+let autoBusy = false, autoPending = false;
+
+function renderDataAge() {
+  if (!latest) return;
+  const age = Math.round((Date.now() / 1000 - latest.ts) / 60);
+  $('#dataAge').textContent = `${recipes.length} forge tarifi · fiyatlar ${age < 1 ? 'az önce' : `${age} dk önce`} güncellendi (15 dakikada bir yenilenir, sayfa açıkken kendiliğinden güncellenir)`;
+}
+
+// Typing into a field would be lost if the table were re-drawn now: wait until the user leaves it.
+const editing = () => !!document.activeElement?.closest?.('main input, main select, main textarea');
+
+async function autoRefresh() {
+  if (autoBusy || liveBusy || document.hidden || !latest) return;
+  autoBusy = true;
+  try {
+    if (!autoPending) {
+      const l = await getJson(DATA_URL + 'latest.json');
+      if (!(l?.ts > latest.ts)) return;
+      // Market data is only re-read if a tab already loaded it.
+      const m = market ? await getJson(DATA_URL + 'market.json') : null;
+      latest = l;
+      if (m) market = m;
+      histCache.clear();
+      liveAt = null;
+      autoPending = true;
+    }
+    if (editing()) return; // re-drawn on the next check or when the field loses focus
+    autoPending = false;
+    const y = scrollY;
+    renderLiveStatus();
+    refreshAll();
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+    scrollTo(0, y);
+  } catch (err) {
+    console.warn('Otomatik fiyat yenileme başarısız, sonra tekrar denenecek:', err);
+  } finally {
+    autoBusy = false;
+    renderDataAge();
+  }
+}
+
+function startAutoRefresh() {
+  setInterval(autoRefresh, AUTO_CHECK_MS);
+  setInterval(renderDataAge, 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) autoRefresh(); });
+  document.addEventListener('focusout', () => { if (autoPending) setTimeout(autoRefresh, 300); });
 }
 
 // ---------- NPC vs Bazaar ----------
@@ -2401,9 +2455,9 @@ async function main() {
     console.error(err);
     return;
   }
-  const age = Math.round((Date.now() / 1000 - latest.ts) / 60);
-  $('#dataAge').textContent = `${recipes.length} forge tarifi · fiyatlar ${age < 1 ? 'az önce' : `${age} dk önce`} güncellendi (15 dakikada bir yenilenir)`;
+  renderDataAge();
   refreshAll();
+  startAutoRefresh();
   // Tables are filled now (some tabs load market data first): put the page back where it was.
   if (['npc', 'craft', 'sellcraft', 'mine'].includes(activeTab())) { try { await loadExtra(); } catch { /* tab shows it */ } }
   await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
