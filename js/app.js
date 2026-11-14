@@ -31,6 +31,7 @@ const DEFAULTS = {
   sackFetch: null, // { profile, sig, changedAt, items, fetchedAt }: the last pull from the sacks
   forging: null, // [{ id, slot, start }]: mining-route items in the forge at the last sack pull
   forgeAll: null, // every forge job at the last sack pull, for the "done" notifications
+  forgePlan: { count: null, pick: {}, savedAt: 0 }, // Forge planı: slot count (null = free slots), slot index -> item id ('' = empty); missing = suggestion
   forgeNotify: false, forgeNotified: {}, // notify when a forge is done; keys `${slot}:${start}` already notified
 };
 let S = load();
@@ -1749,6 +1750,7 @@ async function renderMine() {
   $('#mineGem').hidden = !gem;
   if (gem) { renderGemForge(); renderGemRank(); }
   renderForging();
+  renderPlan();
   renderMineTotal();
   $('#metalNote').textContent = 'Tarifler NotEnoughUpdates verisinden: anahtar, Refined ve Glacite Amalgamation doğrudan Enchanted malzemeden, Plate ise Refined + Glacite Amalgamation ile forgelanır. Ek malzemeler (Bejeweled Handle, Glacite Amalgamation, Fine gemler…) satın alınmış sayılır. '
     + `Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). Bir sonraki ürüne yetmeyen miktar Enchanted (ya da ham) olarak satılmış sayılır. `
@@ -1774,6 +1776,206 @@ function perfectRoute(label, product, inputs, stages) {
     wallSec: stages.reduce((t, sec) => t + sec * k, 0),
   };
 }
+// ---------- forge plan ----------
+// Suggests what to put into each free forge slot (Mining tab items only), lets the player change it,
+// keeps the choice in the browser and lists what is needed: held, crafted from held lower forms
+// (Rough → Flawed → Fine, raw → Enchanted…), bought. Items that need nothing bought come first
+// (Mito: "bende olanlar öncelikli"), then by profit per hour. Forge-made inputs (Plate's Refined,
+// Amalgamation…) are not forged here: they are held or bought. "Mod için kopyala" gives the list to
+// the Minecraft mod (/kazanc liste yukle reads it from the clipboard).
+const PLAN_PREFIX = 'MPC-PLAN1 ';
+function planIds() {
+  const ids = [...MINE.filter((m) => m.refined).map((m) => m.refined), 'TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE',
+    'SKELETON_KEY', 'TUNGSTEN_KEY', 'UMBER_KEY', ...recipes.filter((r) => isGem(r.id, 'PERFECT')).map((r) => r.id)];
+  return [...new Set(ids)].filter((id) => forgeRecipe(id));
+}
+// Everything held that the plan can use: mined raw/Enchanted, gems in the sacks, crafted forms.
+function planPool() {
+  const pool = {};
+  const add = (id, n) => { n = Math.max(0, Math.floor(Number(n) || 0)); if (id && n) pool[id] = (pool[id] || 0) + n; };
+  for (const m of MINE) {
+    const { raw, ench } = mineHold(m);
+    add(m.raw, raw);
+    if (m.ench) add(m.ench, ench);
+  }
+  for (const [t, h] of Object.entries(S.gemHold || {})) for (const tier of ['ROUGH', 'FLAWED', 'FINE', 'FLAWLESS']) add(`${tier}_${t}_GEM`, h?.[tier]);
+  for (const [id, n] of Object.entries(S.refHold || {})) add(id, n);
+  return pool;
+}
+// A crafting-table compression of one input (160 Glacite → 1 Enchanted Glacite, 80 Flawed → 1 Fine).
+function planCraft(id) {
+  const c = craftsBy.get(id)?.find((x) => x.inputs.length === 1 && x.count === 1 && x.inputs[0].count > 1);
+  return c ? { from: c.inputs[0].id, per: c.inputs[0].count } : null;
+}
+// Takes `want` of `id` from the pool: held first, then crafted from held lower forms; the rest is bought.
+function planTake(id, want, pool, depth = 0) {
+  const have = Math.min(pool[id] || 0, want);
+  pool[id] = (pool[id] || 0) - have;
+  const node = { id, count: want, have, made: 0, bought: 0, kids: [], depth };
+  const rest = want - have;
+  const c = rest && depth < 3 ? planCraft(id) : null;
+  if (c) {
+    const probe = planTake(c.from, rest * c.per, { ...pool }, depth + 1);
+    const made = Math.floor((probe.have + probe.made) / c.per);
+    if (made) { node.made = made; node.kids.push(planTake(c.from, made * c.per, pool, depth + 1)); }
+  }
+  node.bought = rest - node.made;
+  return node;
+}
+function planHeldValue(n) {
+  const s = n.have ? marketSell(n.id).net || 0 : 0;
+  return s * n.have + n.kids.reduce((t, k) => t + planHeldValue(k), 0);
+}
+// One slot: the forge recipe's inputs taken from the pool, cost and profit.
+function planSlot(id, pool) {
+  const r = forgeRecipe(id);
+  const nodes = r.inputs.map((i) => planTake(i.id, i.count, pool));
+  let cash = 0, cashOk = true, buys = 0;
+  for (const n of nodes) {
+    if (!n.bought) continue;
+    const u = marketBuy(n.id).unit;
+    if (u == null) cashOk = false; else cash += u * n.bought;
+    if (!isFreeCrystal(n.id)) buys += n.bought;
+  }
+  const held = nodes.reduce((t, n) => t + planHeldValue(n), 0);
+  const sale = marketSell(id).net;
+  const sec = r.duration * (1 - qfPercent(effective().qfLevel) / 100);
+  const profit = sale == null || !cashOk ? null : sale * (r.count || 1) - cash - held;
+  return { id, nodes, cash: cashOk ? cash : null, held, buys, sec, profit, hour: profit == null ? null : (profit / Math.max(1, sec)) * 3600 };
+}
+function planFree() {
+  const { slots } = effective();
+  const now = Date.now();
+  const all = S.forgeAll ? S.forgeAll.map(forgeJob) : null;
+  const busyJobs = all ? all.filter((j) => j.end == null || j.end > now) : [];
+  const freeAuto = Math.max(0, slots - busyJobs.length);
+  return { slots, known: !!all, busyJobs, freeAuto, free: S.forgePlan?.count ?? freeAuto };
+}
+function forgePlan() {
+  const fp = S.forgePlan || (S.forgePlan = { count: null, pick: {}, savedAt: 0 });
+  const f = planFree();
+  const ids = planIds();
+  const pool = planPool();
+  const out = [];
+  for (let i = 0; i < f.free; i++) {
+    const pick = fp.pick?.[i];
+    // The suggestion for this slot, with what the earlier slots already used.
+    const cands = ids.filter((id) => forgeRecipe(id).duration >= QUICK_SECONDS)
+      .map((id) => planSlot(id, { ...pool }))
+      .filter((c) => c.profit != null && c.profit > 0)
+      .sort((a, b) => (a.buys > 0) - (b.buys > 0) || b.hour - a.hour);
+    const best = cands[0]?.id || '';
+    const id = pick == null ? best : pick;
+    const slot = id ? planSlot(id, pool) : null;
+    out.push({ i, id, best, manual: pick != null, slot });
+  }
+  return { ...f, ids, slots: out };
+}
+// Everything the plan needs, one entry per item: needed for the forge, held, crafted, bought.
+function planNeeds(plan) {
+  const by = new Map();
+  const walk = (n, parent) => {
+    const e = by.get(n.id) || { id: n.id, need: 0, have: 0, made: 0, bought: 0, top: false, depth: n.depth, parent, from: null };
+    if (!parent) { e.need += n.count; e.top = true; }
+    e.have += n.have; e.made += n.made; e.bought += n.bought;
+    e.depth = Math.max(e.depth, n.depth);
+    if (n.kids[0]) e.from = n.kids[0].id;
+    by.set(n.id, e);
+    for (const k of n.kids) walk(k, n.id);
+  };
+  for (const s of plan.slots) for (const n of s.slot?.nodes || []) walk(n, null);
+  return [...by.values()];
+}
+function planText(plan, needs) {
+  const rows = [];
+  const target = (e) => e.have + e.made;
+  // Crafts deepest first (Rough → Flawed before Flawed → Fine), then buys, then what is already enough.
+  for (const e of [...needs].filter((x) => x.made).sort((a, b) => b.depth - a.depth)) rows.push(['c', e.id, anyName(e.id), e.made, target(e), e.parent || '', '']);
+  for (const e of needs.filter((x) => x.bought)) {
+    rows.push([isFreeCrystal(e.id) ? 'x' : 'b', e.id, anyName(e.id), e.bought, e.have + e.made + e.bought, '', market.bz[e.id] ? 'bz' : market.ah[e.id] ? 'ah' : '']);
+  }
+  for (const e of needs.filter((x) => x.top && !x.made && !x.bought)) rows.push(['h', e.id, anyName(e.id), e.have, e.have, '', '']);
+  const forge = {};
+  for (const s of plan.slots) if (s.id) forge[s.id] = (forge[s.id] || 0) + 1;
+  return PLAN_PREFIX + JSON.stringify({ v: 1, at: Date.now(), forge: Object.entries(forge).map(([id, n]) => [id, anyName(id), n]), rows });
+}
+function renderPlan() {
+  const box = $('#minePlan');
+  if (!box) return;
+  const plan = forgePlan();
+  const fp = S.forgePlan;
+  const head = `<h3>Forge planı</h3>
+    <p class="small muted">${plan.known
+      ? `${effective().slots} slotun ${plan.busyJobs.length} tanesi dolu (son çekim), <b>${plan.freeAuto} boş slot</b>.`
+      : `Forge bilgisi henüz çekilmedi, ${effective().slots} slotun hepsi boş sayıldı ("Sack'lerden çek" ile dolu slotlar düşülür).`}
+      Öneri Mining kârları itemlerinden: önce hiçbir şey satın almadan elindekiyle yapılabilenler, sonra saatlik kâr (elindeki malzeme satış değeriyle sayılır; 10 dk'dan kısa forgelar önerilmez ama seçilebilir). Değiştirmek için listeden seç; seçimin bu tarayıcıda kaydedilir.</p>
+    <div class="controls"><label>Kaç slot için <input type="number" min="0" max="20" step="1" data-plan-count placeholder="${plan.freeAuto}" value="${fp.count ?? ''}"></label>
+      <span class="muted small">Boş bırakırsan boş slot sayısı kullanılır.</span></div>`;
+  if (!plan.slots.length) { box.innerHTML = head + '<p class="muted small">Boş slot yok.</p>'; return; }
+  const opt = (sel, best) => `<option value="">— boş bırak —</option>` + plan.ids.map((id) => `<option value="${id}"${id === sel ? ' selected' : ''}>${esc(anyName(id))}${id === best ? ' (öneri)' : ''}</option>`).join('');
+  const rows = plan.slots.map((s) => `<tr><td>${s.i + 1}</td>
+      <td><select data-plan-slot="${s.i}">${opt(s.id, s.best)}</select> ${s.id && s.id === s.best ? '<span class="tag pos">öneri</span>' : s.manual ? '<span class="muted small">elle seçildi</span>' : ''}</td>
+      <td class="num">${s.slot ? duration(s.slot.sec) : '—'}</td>
+      <td class="num ${s.slot?.profit > 0 ? 'pos' : 'neg'}">${s.slot ? coins(s.slot.profit) : '—'}</td>
+      <td class="num">${s.slot?.hour == null ? '—' : coins(s.slot.hour) + '/s'}</td></tr>`).join('');
+  const busy = plan.busyJobs.map((j) => `<tr class="muted"><td>${j.slot}</td><td colspan="4">Dolu: ${esc(anyName(j.id))}${j.end ? ` (${forgeLeft(j.end)})` : ''}</td></tr>`).join('');
+  const sum = plan.slots.reduce((t, s) => (t == null || (s.slot && s.slot.profit == null) ? null : t + (s.slot?.profit || 0)), 0);
+  const needs = planNeeds(plan);
+  const top = needs.filter((e) => e.top);
+  const kidsOf = (id) => needs.filter((e) => e.parent === id && e.made);
+  const craftNote = (e) => {
+    if (!e.made || !e.from) return '';
+    const sub = kidsOf(e.from).map((k) => `önce ${fmtN(k.made * (planCraft(k.id)?.per || 1))} ${esc(anyName(k.from))} → ${fmtN(k.made)}`).join(', ');
+    return ` <span class="muted small">(${fmtN(e.made * planCraft(e.id).per)} ${esc(anyName(e.from))}'dan${sub ? `; ${sub}` : ''})</span>`;
+  };
+  let cost = 0;
+  const needRows = top.map((e) => {
+    const u = marketBuy(e.id).unit;
+    const c = e.bought ? (u == null ? null : u * e.bought) : 0;
+    cost = cost == null || c == null ? null : cost + c;
+    const ok = e.have >= e.need;
+    return `<tr><td>${esc(anyName(e.id))}</td><td class="num">${fmtN(e.need)}</td>
+      <td class="num ${ok ? 'pos' : ''}">${isFreeCrystal(e.id) ? '—' : fmtN(e.have) + (ok ? ' ✓' : '')}</td>
+      <td class="num">${e.made ? fmtN(e.made) + craftNote(e) : '—'}</td>
+      <td class="num ${e.bought && !isFreeCrystal(e.id) ? 'neg' : ''}">${e.bought ? fmtN(e.bought) + (isFreeCrystal(e.id) ? ' <span class="muted small">(crystal: satılmaz, sende olmalı)</span>' : '') : '—'}</td>
+      <td class="num">${e.bought && !isFreeCrystal(e.id) ? coins(c) : '—'}</td></tr>`;
+  }).join('');
+  box.innerHTML = `${head}
+    <div class="table-wrap"><table><thead><tr><th>Slot</th><th>Ne koyulacak</th><th class="num">Süre</th><th class="num">Kâr</th><th class="num">Saatlik</th></tr></thead>
+    <tbody>${rows}${busy}<tr><td></td><td><b>Toplam</b></td><td></td><td class="num pos"><b>${coins(sum)}</b></td><td></td></tr></tbody></table></div>
+    <p class="small"><button type="button" data-plan-reset>↺ Öneriye dön</button> <span class="muted">${fp.savedAt ? `Plan bu tarayıcıda kaydedildi (${fmtWhen(fp.savedAt)}).` : 'Öneri gösteriliyor; bir slotu değiştirince kaydedilir.'}</span></p>
+    <h3>Gerekenler</h3>
+    ${top.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Gerekli</th><th class="num">Sende</th><th class="num">Craftla</th><th class="num">Satın al</th><th class="num">Maliyet</th></tr></thead>
+    <tbody>${needRows}<tr><td colspan="5"><b>Satın alma toplamı</b></td><td class="num"><b>${coins(cost)}</b></td></tr></tbody></table></div>` : '<p class="muted small">Plan boş.</p>'}
+    <p class="muted small">Sende: sack'ler (gemler, ham ve Enchanted) ve "Sack'lerden çek"in saydığı Refined/Plate/Amalgamation (sack, envanter, ender chest, storage). Eksik önce sendeki alt biçimden craftlanır (160 ham → Enchanted, 80 Rough → Flawed, 80 Flawed → Fine); kalan seçili alış yöntemiyle satın alınır.</p>
+    <p><button type="button" class="primary" data-plan-copy ${top.length ? '' : 'disabled'}>📋 Mod için kopyala</button>
+      <span class="muted small" id="planCopyStatus">Oyunda <b>/kazanc liste yukle</b> yaz (ya da /kazanc menüsünde "Listeyi panodan yükle"): mod solda alışveriş listesini gösterir.</span></p>`;
+}
+function planChange(el) {
+  const fp = S.forgePlan;
+  if ('planCount' in el.dataset) fp.count = el.value === '' ? null : Math.max(0, Math.min(20, Math.floor(Number(el.value) || 0)));
+  else fp.pick = { ...fp.pick, [el.dataset.planSlot]: el.value };
+  fp.savedAt = Date.now();
+  save(); renderPlan();
+}
+async function planClick(ev) {
+  const el = ev.target;
+  if ('planReset' in el.dataset) {
+    S.forgePlan = { count: S.forgePlan.count, pick: {}, savedAt: 0 };
+    save(); renderPlan();
+  } else if ('planCopy' in el.dataset) {
+    const plan = forgePlan();
+    const text = planText(plan, planNeeds(plan));
+    const status = $('#planCopyStatus');
+    try {
+      await navigator.clipboard.writeText(text);
+      status.innerHTML = '<b class="pos">✓ Kopyalandı.</b> Oyunda <b>/kazanc liste yukle</b> yaz.';
+    } catch {
+      status.textContent = 'Panoya kopyalanamadı (tarayıcı izin vermedi). Sayfayı yenileyip tekrar dene.';
+    }
+  }
+}
+
 // ---------- gemstones for Glacite Amalgamation ----------
 // Fills every free forge slot with one Glacite Amalgamation: the Fine gems it needs are taken from
 // what is held, the shortfall is crafted up from held Flawed (and Rough, 80 → 1 each step) as far as
@@ -2591,6 +2793,7 @@ function wire() {
     openDetail(id);
   });
   $('#mineSackBtn').addEventListener('click', fetchSacks);
+  $('#minePlan').addEventListener('click', planClick);
   $('#mineForge').addEventListener('change', (ev) => { if (ev.target.id === 'forgeNotify') setForgeNotify(ev.target.checked); });
   // Checked every 20 s; the "Kalan" column is refreshed with it.
   setInterval(() => {
@@ -2608,6 +2811,7 @@ function wire() {
     }
     else if (d.mineTotal) S.mineInTotal[d.mineTotal] = el.checked;
     else if (d.refHold) S.refHold = { ...S.refHold, [d.refHold]: Math.max(0, Math.floor(Number(el.value) || 0)) };
+    else if ('planSlot' in d || 'planCount' in d) return planChange(el);
     else if ('amalgSlots' in d) amalgSlotsManual = el.value === '' ? null : Math.max(0, Math.floor(Number(el.value) || 0));
     else return;
     save(); renderMine();
