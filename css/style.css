@@ -152,3 +152,4 @@ td.dim { opacity: .5; }
 .held-crafted { margin: 10px 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 6px; }
 .held-crafted .controls { align-items: center; }
 .held-crafted p { margin: 6px 0 0; }
+td.sub { padding-left: 28px; color: var(--text-secondary); }

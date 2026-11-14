@@ -1656,8 +1656,8 @@ function craftedBox(m) {
   const inputs = h.rows.map((r) => `<label>${esc(anyName(r.id))} <input type="number" min="0" step="1" data-ref-hold="${r.id}" value="${r.n || ''}" placeholder="0"></label>`).join('');
   const list = h.held.map((r) => `${fmtAmt(r.n)}× ${esc(anyName(r.id))}${thinTag(r.id)} → ${coins(r.total)}`).join(' · ');
   return `<div class="held-crafted">
-    <div class="controls"><b>Elindeki hazır (craftlanmış)</b>${inputs}</div>
-    <p class="muted small">${h.held.length ? `${list}${h.held.length > 1 ? ` · toplam ${coins(h.total)}` : ''}. ` : ''}Bunlar ayrı sayılır: yukarıdaki ham/Enchanted hesabına girmez, olduğu gibi satılmış gibi değerlenir.</p>
+    <div class="controls"><b>↳ ${esc(m.name)}'ten craftlanmış, elindeki hazır</b>${inputs}</div>
+    <p class="muted small">${h.held.length ? `${list}${h.held.length > 1 ? ` · toplam ${coins(h.total)}` : ''}. ` : ''}Ayrı sayılır: yukarıdaki ham/Enchanted ${esc(m.name)} hesabına girmez, olduğu gibi satılmış gibi değerlenir; alttaki toplamda ${esc(m.name)}'in hemen altında ayrı satır.</p>
   </div>`;
 }
 
@@ -1678,7 +1678,7 @@ function renderMineTotal() {
       c.has && { id: m.id, name: m.name, what: c.chosen ? `${c.chosen.label}${c.chosen.n ? `: ${fmtAmt(c.chosen.n)}× ${anyName(c.chosen.product)}` : ''}` : '—',
         total: c.chosen?.total ?? null, best: c.best?.total ?? null, time: c.chosen?.wallSec || 0 },
       // Held crafted forms: their own row, sold as they are.
-      h.held.length && { id: `HELD_${m.id}`, name: `${m.name} (elindeki hazır)`, what: `Olduğu gibi sat: ${h.held.map((r) => `${fmtAmt(r.n)}× ${anyName(r.id)}`).join(', ')}`,
+      h.held.length && { id: `HELD_${m.id}`, name: `↳ ${m.name}: elindeki hazır`, sub: true, what: `Olduğu gibi sat: ${h.held.map((r) => `${fmtAmt(r.n)}× ${anyName(r.id)}`).join(', ')}`,
         total: h.total, best: h.total, time: 0 },
     ].filter(Boolean);
   });
@@ -1700,7 +1700,7 @@ function renderMineTotal() {
     ${lines.map((l) => {
       const d = l.total != null && l.best != null ? l.total - l.best : null;
       return `<tr${inTotal(l.id) ? '' : ' class="dim"'}><td><input type="checkbox" data-mine-total="${l.id}"${inTotal(l.id) ? ' checked' : ''} aria-label="${esc(l.name)} toplama kat"></td>
-      <td>${esc(l.name)}</td><td class="small">${esc(l.what)}</td><td class="num">${coins(l.total)}</td>
+      <td${l.sub ? ' class="sub"' : ''}>${esc(l.name)}</td><td class="small">${esc(l.what)}</td><td class="num">${coins(l.total)}</td>
       <td class="num ${d != null && d < -0.5 ? 'neg' : ''}">${d == null || Math.abs(d) < 0.5 ? '—' : coins(d)}</td></tr>`;
     }).join('')}
     </tbody></table></div>
