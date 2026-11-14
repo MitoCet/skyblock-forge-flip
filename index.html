@@ -449,5 +449,24 @@
       <p class="muted small" id="detailNote"></p>
     </div>
   </dialog>
+
+  <dialog id="planPick" class="pick">
+    <div class="dialog-head">
+      <h2 id="pickTitle"></h2>
+      <button class="ghost" data-pick-close aria-label="Kapat">✕</button>
+    </div>
+    <div class="controls pick-controls">
+      <label class="grow">Ara <input type="search" id="pickSearch" placeholder="ör. plate, drill, ruby" autocomplete="off"></label>
+      <div class="range"><span class="muted small">Sırala:</span>
+        <button type="button" data-pick-sort="hour">Saatlik</button><button type="button" data-pick-sort="profit">Kâr</button>
+        <button type="button" data-pick-sort="time">Kısa süre</button><button type="button" data-pick-sort="name">İsim</button></div>
+      <label class="check"><input type="checkbox" id="pickHeld"> Sadece elindekiyle yapılabilenler</label>
+    </div>
+    <div class="range pick-cats" id="pickCats"></div>
+    <div class="table-wrap pick-wrap"><table><thead><tr><th>Item</th><th class="num">Süre</th><th class="num">Kâr</th><th class="num">Saatlik</th><th class="num">Alınacak</th></tr></thead>
+      <tbody id="pickList"></tbody></table></div>
+    <p class="muted small" id="pickNote"></p>
+    <p><button type="button" class="ghost" data-pick-best>↺ Öneriye dön</button> <button type="button" class="ghost" data-pick-empty>Slotu boş bırak</button></p>
+  </dialog>
 </body>
 </html>

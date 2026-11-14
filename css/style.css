@@ -162,3 +162,14 @@ td.sub { padding-left: 28px; color: var(--text-secondary); }
 .need-summary { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
 .need-summary p { margin: 4px 0; }
 .need-summary ol { margin: 4px 0; padding-left: 20px; }
+
+/* Forge plan picker */
+.pick-btn { background: var(--surface-2); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.pick-btn:hover { border-color: var(--accent); }
+dialog.pick { width: min(820px, calc(100vw - 32px)); }
+.pick-controls { margin-top: 12px; }
+.pick-controls .grow { flex: 1 1 220px; }
+.pick-cats { flex-wrap: wrap; margin-bottom: 10px; }
+.pick-wrap { max-height: min(60vh, 520px); overflow-y: auto; }
+#pickList tr.picked { background: var(--surface-2); }
+#pickList tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
