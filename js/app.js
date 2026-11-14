@@ -1778,15 +1778,15 @@ function perfectRoute(label, product, inputs, stages) {
   };
 }
 // ---------- forge plan ----------
-// Suggests what to put into each free forge slot (Mining tab items only), lets the player change it,
+// Suggests what to put into each free forge slot, lets the player change it (any forge recipe),
 // keeps the choice in the browser and lists what is needed: held, crafted from held lower forms
-// (Rough → Flawed → Fine, raw → Enchanted…), bought. Suggested: a Plate/Refined that needs nothing bought
-// (best per hour), else Glacite Amalgamation; never Perfect items (Mito). Forge-made inputs (Plate's Refined,
+// (Rough → Flawed → Fine, raw → Enchanted…), bought. Suggested: a ticked item ("Önerilecek itemler") that needs
+// nothing bought (best per hour), else Glacite Amalgamation (Mito). Forge-made inputs (Plate's Refined,
 // Amalgamation…) are not forged here: they are held or bought. "Mod için kopyala" gives the list to
 // the Minecraft mod (/kazanc forge yukle reads it from the clipboard).
 const PLAN_PREFIX = 'MPC-PLAN1 ';
-// Suggested first, when they can be made from what is held: Plates and Refined (Mito, 2026-11-14).
-const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'REFINED_TUNGSTEN', 'REFINED_UMBER', 'REFINED_MITHRIL', 'REFINED_TITANIUM'];
+// Ticked by default in "Önerilecek itemler": Tungsten/Umber Plate, Perfect Plate, Refined Tungsten/Umber (Mito, 2026-11-14).
+const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE', 'REFINED_TUNGSTEN', 'REFINED_UMBER'];
 // Mito ticks which forge items the suggestion may use ("Önerilecek itemler"); the default is the list above plus Amalgamation.
 const PLAN_FALLBACK = 'GLACITE_AMALGAMATION';
 const planAllowed = () => new Set(S.planAllow || [...PLAN_FIRST, PLAN_FALLBACK]);
