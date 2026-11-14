@@ -173,3 +173,4 @@ dialog.pick { width: min(820px, calc(100vw - 32px)); }
 .pick-wrap { max-height: min(60vh, 520px); overflow-y: auto; }
 #pickList tr.picked { background: var(--surface-2); }
 #pickList tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+#pickList tr.pick-group th { background: var(--bg); color: var(--text-secondary); font-size: 12px; text-transform: none; position: sticky; top: 33px; }
