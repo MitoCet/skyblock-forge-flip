@@ -149,3 +149,7 @@ td.dim { opacity: .5; }
 }
 .amalg, .refcalc { margin-top: 16px; }
 .amalg-steps { padding-left: 20px; margin: 8px 0; } .amalg-steps li { margin: 4px 0; } .amalg-steps ul { margin: 2px 0; padding-left: 18px; }
+.held-crafted { margin: 10px 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 6px; }
+.held-crafted .controls { align-items: center; }
+.held-crafted p { margin: 6px 0 0; }
+td.sub { padding-left: 28px; color: var(--text-secondary); }

@@ -26,7 +26,7 @@ const DEFAULTS = {
   scMarket: 'all', scSort: 'diff', scNpc: true, scOnlyCraft: false, scHideMissing: true,
   scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', gemHold: {}, gemCountLow: false,
   metalOwnPlates: false,
-  refHold: {}, // held Refined Tungsten/Umber and Tungsten/Umber Plate for the "sell or Plate" calculator
+  refHold: {}, // held crafted/forged forms (Refined, Plate, key, Amalgamation…), shown apart from raw on the Mining cards
   mine: null, mineRoute: {}, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
   sackFetch: null, // { profile, sig, changedAt, items, fetchedAt }: the last pull from the sacks
   forging: null, // [{ id, slot, start }]: mining-route items in the forge at the last sack pull
@@ -1435,6 +1435,20 @@ function mineCalc(m) {
   return { raw, ench, whole, rawLeft, rows, best, chosen, has: raw > 0 || ench > 0 };
 }
 
+// Crafted / forged forms of a material that are already held (Refined, Plate, key, Amalgamation,
+// Concentrated Stone). Shown on their own line and valued at their own sale price; they never feed
+// the routes above, which only use raw and Enchanted (Mito, 2026-11-14).
+const craftedIds = (m) => (m.simple || m.ore ? [] : [m.refined, m.plate, m.key, m.craftUp].filter(Boolean));
+function craftedCalc(m) {
+  const rows = craftedIds(m).map((id) => {
+    const n = Math.max(0, Math.floor(Number(S.refHold?.[id]) || 0));
+    const unit = marketSell(id).net;
+    return { id, n, unit, total: unit == null ? null : unit * n };
+  });
+  const held = rows.filter((r) => r.n > 0);
+  return { rows, held, total: held.some((r) => r.total == null) ? null : held.reduce((t, r) => t + r.total, 0) };
+}
+
 // Route clicks for preferRefined materials, kept only for this page view.
 const mineRouteView = {};
 
@@ -1611,6 +1625,7 @@ function mineSection(m) {
       <label class="check"><input type="checkbox" data-mine-total="${m.id}"${inTotal(m.id) ? ' checked' : ''}> Toplama kat</label>
       ${m.simple ? '<span class="muted small">Forge ya da craft tarifi yok, olduğu gibi satılır.</span>' : `<span class="muted small">Toplam ${fmtAmt(c.whole + c.rawLeft / enchRatio(m), 1)} Enchanted değerinde (${fmtAmt(enchRatio(m))} ham = 1 Enchanted)</span>`}
     </div>
+    ${craftedBox(m)}
     ${c.has ? `<div class="table-wrap"><table>
       <thead><tr>
         <th>Yol</th><th>Ne çıkar</th>
@@ -1634,6 +1649,18 @@ function mineSection(m) {
   </div>`;
 }
 
+// "Elindeki hazır" box of a card: held crafted forms, typed or pulled, apart from raw/Enchanted.
+function craftedBox(m) {
+  const h = craftedCalc(m);
+  if (!h.rows.length) return '';
+  const inputs = h.rows.map((r) => `<label>${esc(anyName(r.id))} <input type="number" min="0" step="1" data-ref-hold="${r.id}" value="${r.n || ''}" placeholder="0"></label>`).join('');
+  const list = h.held.map((r) => `${fmtAmt(r.n)}× ${esc(anyName(r.id))}${thinTag(r.id)} → ${coins(r.total)}`).join(' · ');
+  return `<div class="held-crafted">
+    <div class="controls"><b>↳ ${esc(m.name)}'ten craftlanmış, elindeki hazır</b>${inputs}</div>
+    <p class="muted small">${h.held.length ? `${list}${h.held.length > 1 ? ` · toplam ${coins(h.total)}` : ''}. ` : ''}Ayrı sayılır: yukarıdaki ham/Enchanted ${esc(m.name)} hesabına girmez, olduğu gibi satılmış gibi değerlenir; alttaki toplamda ${esc(m.name)}'in hemen altında ayrı satır.</p>
+  </div>`;
+}
+
 // Gemstone types on the Bazaar, and the totals of what is held.
 const gemTypes = () => Object.keys(market.bz).map((id) => id.match(/^ROUGH_([A-Z]+)_GEM$/)?.[1]).filter(Boolean).sort();
 function gemTotals() {
@@ -1645,12 +1672,16 @@ function gemTotals() {
 
 function renderMineTotal() {
   const box = $('#mineTotal');
-  const lines = MINE.map((m) => {
-    const c = mineCalc(m);
-    if (!c.has) return null;
-    return { id: m.id, name: m.name, what: c.chosen ? `${c.chosen.label}${c.chosen.n ? `: ${fmtAmt(c.chosen.n)}× ${anyName(c.chosen.product)}` : ''}` : '—',
-      total: c.chosen?.total ?? null, best: c.best?.total ?? null, time: c.chosen?.wallSec || 0 };
-  }).filter(Boolean);
+  const lines = MINE.flatMap((m) => {
+    const c = mineCalc(m), h = craftedCalc(m);
+    return [
+      c.has && { id: m.id, name: m.name, what: c.chosen ? `${c.chosen.label}${c.chosen.n ? `: ${fmtAmt(c.chosen.n)}× ${anyName(c.chosen.product)}` : ''}` : '—',
+        total: c.chosen?.total ?? null, best: c.best?.total ?? null, time: c.chosen?.wallSec || 0 },
+      // Held crafted forms: their own row, sold as they are.
+      h.held.length && { id: `HELD_${m.id}`, name: `↳ ${m.name}: elindeki hazır`, sub: true, what: `Olduğu gibi sat: ${h.held.map((r) => `${fmtAmt(r.n)}× ${anyName(r.id)}`).join(', ')}`,
+        total: h.total, best: h.total, time: 0 },
+    ].filter(Boolean);
+  });
   const g = gemTotals();
   if (g.has) lines.push({ id: 'GEM', name: 'Gemstone', what: 'Elimdeki gemstone\'lar tablosunda seçtiğin tierlar', total: g.chosen, best: g.best, time: 0 });
   const jobs = forgeJobs();
@@ -1669,7 +1700,7 @@ function renderMineTotal() {
     ${lines.map((l) => {
       const d = l.total != null && l.best != null ? l.total - l.best : null;
       return `<tr${inTotal(l.id) ? '' : ' class="dim"'}><td><input type="checkbox" data-mine-total="${l.id}"${inTotal(l.id) ? ' checked' : ''} aria-label="${esc(l.name)} toplama kat"></td>
-      <td>${esc(l.name)}</td><td class="small">${esc(l.what)}</td><td class="num">${coins(l.total)}</td>
+      <td${l.sub ? ' class="sub"' : ''}>${esc(l.name)}</td><td class="small">${esc(l.what)}</td><td class="num">${coins(l.total)}</td>
       <td class="num ${d != null && d < -0.5 ? 'neg' : ''}">${d == null || Math.abs(d) < 0.5 ? '—' : coins(d)}</td></tr>`;
     }).join('')}
     </tbody></table></div>
@@ -2093,12 +2124,12 @@ async function readHeld(inv, ids) {
   }
   return { count, where };
 }
-// Status piece for the Refined/Plate amounts: how many and where they were found.
+// Status piece for the held crafted amounts: how many and where they were found.
 function refHoldNote(ids, sacks, held) {
   if (!held) return null;
   const inSacks = ids.reduce((t, id) => t + (sacks[id] || 0), 0);
   const parts = [inSacks && `${fmtN(inSacks)} sack`, ...Object.entries(held.where).map(([p, n]) => `${fmtN(n)} ${p}`)].filter(Boolean);
-  return parts.length ? `Refined/Plate (${parts.join(', ')})` : 'Refined/Plate yok (sack, envanter, ender chest, storage)';
+  return parts.length ? `hazır item (${parts.join(', ')})` : 'hazır item yok (sack, envanter, ender chest, storage)';
 }
 
 // Fills the mined amounts and the gemstone holdings from the player's sacks.
@@ -2129,10 +2160,10 @@ async function fetchSacks() {
     for (const t of new Set([...Object.keys(S.gemHold), ...Object.keys(hold)])) {
       S.gemHold[t] = { target: S.gemHold[t]?.target, ...hold[t] };
     }
-    // Refined and plates aren't sack items: count them in the inventory, ender chest, storage backpacks
+    // Crafted forms (Refined, Plate, keys, Amalgamation…) often sit outside the sacks: count them in the inventory, ender chest, storage backpacks
     // and personal vault too. If those blobs can't be read, fall back to sacks only (and only when the
     // sacks hold the item at all, so typed amounts aren't wiped).
-    const refIds = REF_METALS.flatMap((m) => [m.refined, m.plate]);
+    const refIds = MINE.flatMap(craftedIds);
     const held = await readHeld(member?.inventory, refIds);
     for (const id of refIds) {
       if (held) S.refHold = { ...S.refHold, [id]: (sacks[id] || 0) + (held.count[id] || 0) };
