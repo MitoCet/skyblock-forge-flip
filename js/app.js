@@ -1988,10 +1988,8 @@ function refinedSection() {
 
 // ---------- is what I hold enough? ----------
 // For one of each target (Skeleton Key, Perfect Plate, Tungsten/Umber Plate, Refined), walk the
-// recipe: use what is held first, make the rest from held materials where the whole unit can be
-// made, and buy only what is still missing (Mito, 2026-11-14). A Plate or Refined is made only when
-// all its Refined / Enchanted come from what is held; Amalgamation, Mithril Plate and Bejeweled
-// Handle are bought unless held. Each target is checked on its own, from the full holdings.
+// recipe: use what is held first, make the rest, and buy only the lowest missing inputs
+// (Mito, 2026-11-14). Amalgamation, Mithril Plate and Bejeweled Handle are bought unless held. Each target is checked on its own, from the full holdings.
 // Also read from sacks/storage for these cards (Mito, 2026-11-14: Mithril Plate counted, though rarely held).
 const NEED_HELD_EXTRA = ['MITHRIL_PLATE', 'PERFECT_PLATE'];
 const NEED_METALS = REF_METALS.map((m) => MINE.find((x) => x.refined === m.refined)).filter(Boolean);
@@ -2010,28 +2008,51 @@ function needRecipe(id) {
   if (['SKELETON_KEY', 'PERFECT_PLATE', ...NEED_METALS.flatMap((x) => [x.plate, x.refined])].includes(id)) return forgeRecipe(id);
   return null;
 }
-// Plates and Refined are made only from held metal; the Perfect Plate and the key take what is missing.
-const needStrictBelow = (id) => NEED_METALS.some((m) => m.plate === id || m.refined === id || m.ench === id);
-function needResolve(id, count, pool) {
+// Enchanted Tungsten/Umber is crafted from held raw only (raw is never bought). Every other unit
+// that isn't held is made when that needs no metal bought; otherwise it is made from bought lower
+// inputs or bought itself, whichever is cheaper (held things at their sale value). The card's own
+// item is always made, so a missing input shows as the lowest thing to buy, e.g. Enchanted Umber.
+function needMerge(list) {
+  if (!list.length) return null;
+  return list[0].map((k, i) => {
+    const xs = list.map((ks) => ks[i]);
+    const sub = xs.filter((x) => x.kids).map((x) => x.kids);
+    return { ...k, count: xs.reduce((t, x) => t + x.count, 0), have: xs.reduce((t, x) => t + x.have, 0),
+      made: xs.reduce((t, x) => t + x.made, 0), bought: xs.reduce((t, x) => t + x.bought, 0),
+      kids: sub.length ? needMerge(sub) : null };
+  });
+}
+function needResolve(id, count, pool, force = false) {
   const have = Math.min(pool[id] || 0, count);
   pool[id] = (pool[id] || 0) - have;
   const rest = count - have;
-  let made = 0, kids = null;
   const r = rest ? needRecipe(id) : null;
-  if (r) {
-    const strict = needStrictBelow(id);
-    for (let m = rest; m >= 1; m--) {
-      const trial = { ...pool };
-      const ks = r.inputs.map((i) => needResolve(i.id, i.count * m, trial));
-      if (!strict || ks.every((k) => !NEED_STRICT.has(k.id) || k.bought === 0)) {
-        Object.assign(pool, trial); made = m; kids = ks; break;
-      }
-      if (!strict) break;
+  const node = { id, count, have, made: 0, bought: rest, kids: null, craft: !!r?.craft, duration: r?.duration || 0 };
+  if (!r) return node;
+  if (r.craft) {
+    const raw = r.inputs[0];
+    const made = Math.min(rest, Math.floor((pool[raw.id] || 0) / raw.count));
+    if (made) {
+      pool[raw.id] -= made * raw.count;
+      node.kids = [{ id: raw.id, count: made * raw.count, have: made * raw.count, made: 0, bought: 0, kids: null, craft: false, duration: 0 }];
     }
+    return { ...node, made, bought: rest - made };
   }
-  return { id, count, have, made, bought: rest - made, kids, craft: !!r?.craft, duration: r?.duration || 0 };
+  const buy = marketBuy(id).unit;
+  const units = [];
+  let bought = 0;
+  for (let u = 0; u < rest; u++) {
+    const trial = { ...pool };
+    const ks = r.inputs.map((i) => needResolve(i.id, i.count, trial));
+    const t = ks.reduce((acc, k) => needTotals(k, acc), needAcc());
+    if (force || !t.missing.length || buy == null || (t.cashOk && t.cash + t.held <= buy)) {
+      Object.assign(pool, trial); units.push(ks);
+    } else bought++;
+  }
+  return { ...node, made: units.length, bought, kids: needMerge(units) };
 }
-function needTotals(n, acc = { cash: 0, held: 0, missing: [], extras: [], cashOk: true }) {
+const needAcc = () => ({ cash: 0, held: 0, missing: [], extras: [], cashOk: true });
+function needTotals(n, acc = needAcc()) {
   if (n.bought) {
     const u = marketBuy(n.id).unit;
     if (u == null) acc.cashOk = false; else acc.cash += u * n.bought;
@@ -2055,7 +2076,7 @@ function needCount(id) {
   let n = 0, cash = 0;
   const buys = {};
   for (; n < 500; n++) {
-    const t = needTotals(needResolve(id, 1, pool));
+    const t = needTotals(needResolve(id, 1, pool, true));
     if (t.missing.length) break;
     cash += t.cash;
     for (const x of t.extras) buys[x.id] = (buys[x.id] || 0) + x.n;
@@ -2067,7 +2088,7 @@ function needPlan(id) {
   const pool = needPool();
   const already = pool[id] || 0;
   pool[id] = 0;
-  const root = needResolve(id, 1, pool);
+  const root = needResolve(id, 1, pool, true);
   const t = needTotals(root);
   const sale = marketSell(id).net;
   return { id, root, already, can: needCount(id), ...t, sale, sec: needWall(root),
@@ -2091,8 +2112,8 @@ function needLines(n, depth = 0) {
 }
 // A made Plate is compared to just buying it (held Refined at its sale value).
 function needMakeVsBuy(n, acc = []) {
-  if (n.made && NEED_METALS.some((m) => m.plate === n.id)) {
-    const t = n.kids.reduce((a, k) => needTotals(k, a), { cash: 0, held: 0, missing: [], extras: [], cashOk: true });
+  if (n.made && n.kids && (n.id === 'PERFECT_PLATE' || NEED_METALS.some((m) => m.plate === n.id || m.refined === n.id))) {
+    const t = n.kids.reduce((a, k) => needTotals(k, a), needAcc());
     const buy = marketBuy(n.id).unit;
     if (t.cashOk && buy != null) acc.push({ id: n.id, n: n.made, make: (t.cash + t.held), buy: buy * n.made });
   }
@@ -2106,7 +2127,7 @@ function needCard(p, best) {
   const extras = p.extras.length ? ` <span class="muted small">Ayrıca alınır: ${p.extras.map((x) => `${fmtN(x.n)}× ${esc(anyName(x.id))}`).join(', ')}.</span>` : '';
   const mvb = needMakeVsBuy(p.root).map((x) => {
     const d = x.buy - x.make;
-    return `${esc(anyName(x.id))}'i yapmak, satın almaktan <b class="${d >= 0 ? 'pos' : 'neg'}">${coins(Math.abs(d))} ${d >= 0 ? 'ucuz' : 'pahalı'}</b> (yapmak ${coins(x.make)}, Refined satış değeriyle; almak ${coins(x.buy)})`;
+    return `${esc(anyName(x.id))}'i yapmak, satın almaktan <b class="${d >= 0 ? 'pos' : 'neg'}">${coins(Math.abs(d))} ${d >= 0 ? 'ucuz' : 'pahalı'}</b> (yapmak ${coins(x.make)}, elindekiler satış değeriyle; almak ${coins(x.buy)})`;
   });
   const cls = p.profit == null ? '' : p.profit >= 0 ? 'pos' : 'neg';
   return `<div class="need-card${p === best ? ' need-best' : ''}">
@@ -2142,7 +2163,7 @@ function needSection() {
       <ol class="small">${rank}</ol>
     </div>`;
   return `${head}${summary}<div class="need-grid">${plans.map((p) => needCard(p, best)).join('')}</div>
-    <p class="muted small">Kâr = satış − satın alacakların − kullandığın malzemelerin satış değeri (yani o malzemeleri satmaya göre ne kadar fazla kazanırsın). Her kart yeni 1 tane yapmak için ve elindeki her şeyden ayrı ayrı hesaplanır (o itemden sende olanlar kullanılmaz). Önce sendeki kullanılır (Mithril Plate ve Perfect Plate de sack/storage'dan sayılır; sende yoksa Mithril Plate satın alınır ve "kaç tane" sayısını sınırlamaz); Plate ve Refined sadece bütün Refined/Enchanted'ı sende varsa yapılır, yoksa satın alınır. Ham ve Enchanted Tungsten/Umber satılmadığı için değerleri 0 sayılır. Fiyatlar seçili alış/satış yöntemiyle.</p>`;
+    <p class="muted small">Kâr = satış − satın alacakların − kullandığın malzemelerin satış değeri (yani o malzemeleri satmaya göre ne kadar fazla kazanırsın). Her kart yeni 1 tane yapmak için ve elindeki her şeyden ayrı ayrı hesaplanır (o itemden sende olanlar kullanılmaz). Önce sendeki kullanılır (Mithril Plate ve Perfect Plate de sack/storage'dan sayılır; sende yoksa Mithril Plate satın alınır ve "kaç tane" sayısını sınırlamaz). Eksik bir Plate/Refined, elindekilerle yapılabiliyorsa yapılır; yapılamıyorsa eksik alt malzemeyi (ör. Enchanted Umber) almak ile o itemi direkt almaktan ucuz olanı seçilir. Enchanted Tungsten/Umber sadece elindeki hamdan craftlanır (ham satın alınmaz). "Kaç tane" sayısı Tungsten/Umber tarafında hiç satın alma gerekmeyene kadar sayar. Fiyatlar seçili alış/satış yöntemiyle.</p>`;
 }
 
 function perfectSection() {
