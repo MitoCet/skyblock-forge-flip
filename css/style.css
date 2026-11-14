@@ -153,3 +153,12 @@ td.dim { opacity: .5; }
 .held-crafted .controls { align-items: center; }
 .held-crafted p { margin: 6px 0 0; }
 td.sub { padding-left: 28px; color: var(--text-secondary); }
+.need-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }
+.need-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+.need-card h4 { margin: 4px 0; }
+.need-tree > div { padding: 1px 0; }
+.need-best { border-color: var(--good); }
+.need-profit { font-size: 18px; font-weight: 600; margin: 2px 0 4px; }
+.need-summary { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
+.need-summary p { margin: 4px 0; }
+.need-summary ol { margin: 4px 0; padding-left: 20px; }

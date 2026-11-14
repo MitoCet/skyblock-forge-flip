@@ -1970,7 +1970,7 @@ function refinedSection() {
   const inputs = p.metals.map((m) => `<label>${esc(anyName(m.refined))} <input type="number" min="0" step="1" data-ref-hold="${m.refined}" value="${m.ref || ''}" placeholder="0"></label>
       <label>${esc(anyName(m.plate))} <input type="number" min="0" step="1" data-ref-hold="${m.plate}" value="${m.plates || ''}" placeholder="0"></label>`).join('');
   const head = `<h3>Elimdeki Refined: sat mı, Plate mi?</h3>
-    <div class="controls">${inputs}</div>`;
+    <div class="controls">${inputs}<label>${esc(anyName('MITHRIL_PLATE'))} <input type="number" min="0" step="1" data-ref-hold="MITHRIL_PLATE" value="${refHeld('MITHRIL_PLATE') || ''}" placeholder="0"></label></div>`;
   if (!p.has) return `<div class="refcalc">${head}<p class="muted small">Elindeki Refined ve Plate sayısını yaz ("Sack'lerden çek" sack, envanter, ender chest ve storage'dakileri de sayar).</p></div>`;
   const perMetal = p.metals.filter((m) => m.routes.length).map((m) => {
     const amalg = m.ex.map((i) => `${i.count}× ${esc(anyName(i.id))} ${coins(i.unit)}`).join(', ');
@@ -1984,6 +1984,165 @@ function refinedSection() {
   return `<div class="refcalc">${head}${perMetal}${perfect}
     <p class="muted small">Plate için 4 Refined + 1 Glacite Amalgamation gerekir; Amalgamation ve Mithril Plate satın alınmış sayılır. 4'e tamamlanmayan Refined ve Perfect Plate'e eşi olmayan Plate satılmış sayılır. Bazaar satışından %${S.bzTax} vergi düşüldü.</p>
   </div>`;
+}
+
+// ---------- is what I hold enough? ----------
+// For one of each target (Skeleton Key, Perfect Plate, Tungsten/Umber Plate, Refined), walk the
+// recipe: use what is held first, make the rest from held materials where the whole unit can be
+// made, and buy only what is still missing (Mito, 2026-11-14). A Plate or Refined is made only when
+// all its Refined / Enchanted come from what is held; Amalgamation, Mithril Plate and Bejeweled
+// Handle are bought unless held. Each target is checked on its own, from the full holdings.
+// Also read from sacks/storage for these cards (Mito, 2026-11-14: Mithril Plate counted, though rarely held).
+const NEED_HELD_EXTRA = ['MITHRIL_PLATE', 'PERFECT_PLATE'];
+const NEED_METALS = REF_METALS.map((m) => MINE.find((x) => x.refined === m.refined)).filter(Boolean);
+const NEED_STRICT = new Set(NEED_METALS.flatMap((m) => [m.plate, m.refined, m.ench, m.raw]));
+function needPool() {
+  const pool = { ...Object.fromEntries(Object.entries(S.refHold || {}).map(([k, v]) => [k, Math.max(0, Math.floor(Number(v) || 0))])) };
+  for (const m of NEED_METALS) {
+    const { raw, ench } = mineHold(m);
+    pool[m.raw] = raw; pool[m.ench] = ench;
+  }
+  return pool;
+}
+function needRecipe(id) {
+  const m = NEED_METALS.find((x) => x.ench === id);
+  if (m) return { inputs: [{ id: m.raw, count: enchRatio(m) }], duration: 0, craft: true };
+  if (['SKELETON_KEY', 'PERFECT_PLATE', ...NEED_METALS.flatMap((x) => [x.plate, x.refined])].includes(id)) return forgeRecipe(id);
+  return null;
+}
+// Plates and Refined are made only from held metal; the Perfect Plate and the key take what is missing.
+const needStrictBelow = (id) => NEED_METALS.some((m) => m.plate === id || m.refined === id || m.ench === id);
+function needResolve(id, count, pool) {
+  const have = Math.min(pool[id] || 0, count);
+  pool[id] = (pool[id] || 0) - have;
+  const rest = count - have;
+  let made = 0, kids = null;
+  const r = rest ? needRecipe(id) : null;
+  if (r) {
+    const strict = needStrictBelow(id);
+    for (let m = rest; m >= 1; m--) {
+      const trial = { ...pool };
+      const ks = r.inputs.map((i) => needResolve(i.id, i.count * m, trial));
+      if (!strict || ks.every((k) => !NEED_STRICT.has(k.id) || k.bought === 0)) {
+        Object.assign(pool, trial); made = m; kids = ks; break;
+      }
+      if (!strict) break;
+    }
+  }
+  return { id, count, have, made, bought: rest - made, kids, craft: !!r?.craft, duration: r?.duration || 0 };
+}
+function needTotals(n, acc = { cash: 0, held: 0, missing: [], extras: [], cashOk: true }) {
+  if (n.bought) {
+    const u = marketBuy(n.id).unit;
+    if (u == null) acc.cashOk = false; else acc.cash += u * n.bought;
+    (NEED_STRICT.has(n.id) || n.id === 'PERFECT_PLATE' ? acc.missing : acc.extras).push({ id: n.id, n: n.bought, unit: u });
+  }
+  if (n.have) { const s = marketSell(n.id).net; acc.held += (s || 0) * n.have; }
+  for (const k of n.kids || []) needTotals(k, acc);
+  return acc;
+}
+function needWall(n) {
+  if (!n.made || n.craft) return Math.max(0, ...(n.kids || []).map(needWall));
+  const { slots, qfLevel } = effective();
+  const k = 1 - qfPercent(qfLevel) / 100;
+  return Math.ceil(n.made / Math.max(1, slots)) * n.duration * k + Math.max(0, ...(n.kids || []).map(needWall));
+}
+// How many can be made one after another from what is held, without buying any Tungsten/Umber
+// (Plate, Refined, Enchanted) or Perfect Plate; bought extras (Mithril Plate, Amalgamation, Handle) don't limit it.
+function needCount(id) {
+  const pool = needPool();
+  pool[id] = 0;
+  let n = 0, cash = 0;
+  const buys = {};
+  for (; n < 500; n++) {
+    const t = needTotals(needResolve(id, 1, pool));
+    if (t.missing.length) break;
+    cash += t.cash;
+    for (const x of t.extras) buys[x.id] = (buys[x.id] || 0) + x.n;
+  }
+  return { n, cash, buys: Object.entries(buys).map(([bid, k]) => `${fmtN(k)}× ${esc(anyName(bid))}`).join(', ') };
+}
+function needPlan(id) {
+  // A new one is made: the ones of this item already held are only mentioned, not used.
+  const pool = needPool();
+  const already = pool[id] || 0;
+  pool[id] = 0;
+  const root = needResolve(id, 1, pool);
+  const t = needTotals(root);
+  const sale = marketSell(id).net;
+  return { id, root, already, can: needCount(id), ...t, sale, sec: needWall(root),
+    cashProfit: sale == null || !t.cashOk ? null : sale - t.cash,
+    profit: sale == null || !t.cashOk ? null : sale - t.cash - t.held };
+}
+function needLines(n, depth = 0) {
+  const pad = depth ? ` style="margin-left:${depth * 18}px"` : '';
+  const name = esc(anyName(n.id));
+  const out = [];
+  const parts = [];
+  if (n.have) parts.push(`<span class="pos">✓ sende ${fmtN(n.have)}</span>`);
+  if (n.made) parts.push(`🔨 ${fmtN(n.made)} ${n.craft ? 'craftla' : 'forgela'}`);
+  if (n.bought) {
+    const u = marketBuy(n.id).unit;
+    parts.push(`<span class="${NEED_STRICT.has(n.id) || n.id === 'PERFECT_PLATE' ? 'neg' : ''}">🛒 ${fmtN(n.bought)} al (${coins(u == null ? null : u * n.bought)})</span>`);
+  }
+  out.push(`<div${pad}>${fmtN(n.count)}× ${name}: ${parts.join(' · ')}</div>`);
+  if (n.made) for (const k of n.kids) out.push(...needLines(k, depth + 1));
+  return out;
+}
+// A made Plate is compared to just buying it (held Refined at its sale value).
+function needMakeVsBuy(n, acc = []) {
+  if (n.made && NEED_METALS.some((m) => m.plate === n.id)) {
+    const t = n.kids.reduce((a, k) => needTotals(k, a), { cash: 0, held: 0, missing: [], extras: [], cashOk: true });
+    const buy = marketBuy(n.id).unit;
+    if (t.cashOk && buy != null) acc.push({ id: n.id, n: n.made, make: (t.cash + t.held), buy: buy * n.made });
+  }
+  for (const k of n.kids || []) needMakeVsBuy(k, acc);
+  return acc;
+}
+function needCard(p, best) {
+  const verdict = p.missing.length
+    ? `<b class="neg">✗ Yeterli malzeme yok:</b> ${p.missing.map((x) => `${fmtN(x.n)}× ${esc(anyName(x.id))}`).join(', ')} satın alman lazım.`
+    : `<b class="pos">✓ Elindekiyle yapılabilir.</b>`;
+  const extras = p.extras.length ? ` <span class="muted small">Ayrıca alınır: ${p.extras.map((x) => `${fmtN(x.n)}× ${esc(anyName(x.id))}`).join(', ')}.</span>` : '';
+  const mvb = needMakeVsBuy(p.root).map((x) => {
+    const d = x.buy - x.make;
+    return `${esc(anyName(x.id))}'i yapmak, satın almaktan <b class="${d >= 0 ? 'pos' : 'neg'}">${coins(Math.abs(d))} ${d >= 0 ? 'ucuz' : 'pahalı'}</b> (yapmak ${coins(x.make)}, Refined satış değeriyle; almak ${coins(x.buy)})`;
+  });
+  const cls = p.profit == null ? '' : p.profit >= 0 ? 'pos' : 'neg';
+  return `<div class="need-card${p === best ? ' need-best' : ''}">
+    <h4>1× ${esc(anyName(p.id))}${p === best ? ' <span class="tag pos">En kârlı</span>' : ''}${p.already ? ` <span class="tag">sende zaten ${fmtN(p.already)} var</span>` : ''}</h4>
+    <div class="need-profit ${cls}">${p.profit == null ? 'Kâr: —' : `${p.profit >= 0 ? 'Kâr' : 'Zarar'}: ${p.profit >= 0 ? '+' : ''}${coins(p.profit)}`}</div>
+    <p class="small">${verdict}${extras}</p>
+    <p class="small">${p.can.n
+      ? `Elindekiyle <b>${fmtN(p.can.n)} tane</b> yapabilirsin${p.can.cash ? ` <span class="muted">(${p.can.n > 1 ? 'hepsi için ' : ''}${coins(p.can.cash)} alım: ${p.can.buys})</span>` : ''}.`
+      : 'Elindekiyle <b>hiç</b> yapamazsın.'}</p>
+    <div class="small need-tree">${needLines(p.root).join('')}</div>
+    <p class="small muted">Satış (net) ${coins(p.sale)} − satın alınacaklar ${coins(p.cash)} − kullandığın malzemelerin satış değeri ${coins(p.held)}${p.sec ? ` · Forge süresi: ${duration(p.sec)}` : ''}</p>
+    ${mvb.length ? `<p class="muted small">${mvb.join('<br>')}</p>` : ''}
+  </div>`;
+}
+function needSection() {
+  const ids = ['SKELETON_KEY', 'PERFECT_PLATE', ...NEED_METALS.flatMap((m) => [m.plate, m.refined])].filter((id) => forgeRecipe(id));
+  const pool = needPool();
+  const any = Object.values(pool).some((v) => v > 0);
+  const head = '<h3>Elimdeki malzeme yetiyor mu? Ne yapmak kârlı?</h3>';
+  if (!any) return `${head}<p class="muted small">"Sack'lerden çek" ya da yukarıya elindeki Refined/Plate sayısını yaz; her tarif için neyin sende olduğu, neyi yapıp neyi alman gerektiği ve kârı burada çıkar.</p>`;
+  // Most profitable first; profit counts what you use from your holdings at its sale value.
+  const plans = ids.map(needPlan).sort((a, b) => (b.profit ?? -Infinity) - (a.profit ?? -Infinity));
+  const best = plans[0]?.profit != null && plans[0].profit > 0 ? plans[0] : null;
+  const rank = plans.map((p) => {
+    const cls = p.profit == null ? '' : p.profit >= 0 ? 'pos' : 'neg';
+    const how = p.missing.length ? `${p.missing.map((x) => esc(anyName(x.id))).join(', ')} alman lazım` : `elindekiyle ${fmtN(p.can.n)} tane yapılır`;
+    return `<li><b>${esc(anyName(p.id))}</b> yap → <b class="${cls}">${p.profit == null ? '—' : `${p.profit >= 0 ? '+' : ''}${coins(p.profit)}`}</b> <span class="muted small">(${how}${p.sec ? `, ${duration(p.sec)}` : ''})</span></li>`;
+  }).join('');
+  const summary = `<div class="need-summary">
+      <p>${best
+        ? `👉 <b>En kârlısı: 1× ${esc(anyName(best.id))} yapmak</b>, kâr <b class="pos">+${coins(best.profit)}</b>.`
+        : '<b class="neg">Hiçbiri kârlı değil</b>; elindekileri olduğu gibi satmak daha iyi.'}</p>
+      <ol class="small">${rank}</ol>
+    </div>`;
+  return `${head}${summary}<div class="need-grid">${plans.map((p) => needCard(p, best)).join('')}</div>
+    <p class="muted small">Kâr = satış − satın alacakların − kullandığın malzemelerin satış değeri (yani o malzemeleri satmaya göre ne kadar fazla kazanırsın). Her kart yeni 1 tane yapmak için ve elindeki her şeyden ayrı ayrı hesaplanır (o itemden sende olanlar kullanılmaz). Önce sendeki kullanılır (Mithril Plate ve Perfect Plate de sack/storage'dan sayılır; sende yoksa Mithril Plate satın alınır ve "kaç tane" sayısını sınırlamaz); Plate ve Refined sadece bütün Refined/Enchanted'ı sende varsa yapılır, yoksa satın alınır. Ham ve Enchanted Tungsten/Umber satılmadığı için değerleri 0 sayılır. Fiyatlar seçili alış/satış yöntemiyle.</p>`;
 }
 
 function perfectSection() {
@@ -2029,7 +2188,7 @@ function perfectSection() {
       <tbody>${tr}</tbody>
     </table></div>
     <p class="muted small">${cheaper ? `Skeleton Key için ${cheaper === viaPlates ? '3 plate ile Perfect Plate\'i kendin forgelamak' : 'hazır Perfect Plate almak'} ${coins(diff)} daha ucuz. ` : ''}`
-    + `${S.metalOwnPlates ? 'Tungsten ve Umber Plate senin, maliyetleri satsan alacağın net fiyatla sayıldı. ' : ''}</p>`;
+    + `${S.metalOwnPlates ? 'Tungsten ve Umber Plate senin, maliyetleri satsan alacağın net fiyatla sayıldı. ' : ''}</p>${needSection()}`;
 }
 
 // ---------- profile ----------
@@ -2163,7 +2322,7 @@ async function fetchSacks() {
     // Crafted forms (Refined, Plate, keys, Amalgamation…) often sit outside the sacks: count them in the inventory, ender chest, storage backpacks
     // and personal vault too. If those blobs can't be read, fall back to sacks only (and only when the
     // sacks hold the item at all, so typed amounts aren't wiped).
-    const refIds = MINE.flatMap(craftedIds);
+    const refIds = [...MINE.flatMap(craftedIds), ...NEED_HELD_EXTRA];
     const held = await readHeld(member?.inventory, refIds);
     for (const id of refIds) {
       if (held) S.refHold = { ...S.refHold, [id]: (sacks[id] || 0) + (held.count[id] || 0) };
