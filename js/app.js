@@ -1779,11 +1779,13 @@ function perfectRoute(label, product, inputs, stages) {
 // ---------- forge plan ----------
 // Suggests what to put into each free forge slot (Mining tab items only), lets the player change it,
 // keeps the choice in the browser and lists what is needed: held, crafted from held lower forms
-// (Rough → Flawed → Fine, raw → Enchanted…), bought. Items that need nothing bought come first
-// (Mito: "bende olanlar öncelikli"), then by profit per hour. Forge-made inputs (Plate's Refined,
+// (Rough → Flawed → Fine, raw → Enchanted…), bought. Suggested: a Plate/Refined that needs nothing bought
+// (best per hour), else Glacite Amalgamation; never Perfect items (Mito). Forge-made inputs (Plate's Refined,
 // Amalgamation…) are not forged here: they are held or bought. "Mod için kopyala" gives the list to
 // the Minecraft mod (/kazanc forge yukle reads it from the clipboard).
 const PLAN_PREFIX = 'MPC-PLAN1 ';
+// Suggested first, when they can be made from what is held: Plates and Refined (Mito, 2026-11-14).
+const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'REFINED_TUNGSTEN', 'REFINED_UMBER', 'REFINED_MITHRIL', 'REFINED_TITANIUM'];
 function planIds() {
   const ids = [...MINE.filter((m) => m.refined).map((m) => m.refined), 'TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE',
     'SKELETON_KEY', 'TUNGSTEN_KEY', 'UMBER_KEY', ...recipes.filter((r) => isGem(r.id, 'PERFECT')).map((r) => r.id)];
@@ -1860,10 +1862,12 @@ function forgePlan() {
   for (let i = 0; i < f.free; i++) {
     const pick = fp.pick?.[i];
     // The suggestion for this slot, with what the earlier slots already used.
-    const cands = ids.filter((id) => forgeRecipe(id).duration >= QUICK_SECONDS)
+    // Mito: never Perfect items; a Plate or Refined made from what is held (nothing bought), else Glacite Amalgamation.
+    const cands = PLAN_FIRST.filter((id) => forgeRecipe(id))
       .map((id) => planSlot(id, { ...pool }))
-      .filter((c) => c.profit != null && c.profit > 0)
-      .sort((a, b) => (a.buys > 0) - (b.buys > 0) || b.hour - a.hour);
+      .filter((c) => c.profit != null && c.buys === 0)
+      .sort((a, b) => b.hour - a.hour);
+    if (!cands.length && forgeRecipe('GLACITE_AMALGAMATION')) cands.push(planSlot('GLACITE_AMALGAMATION', { ...pool }));
     const best = cands[0]?.id || '';
     const id = pick == null ? best : pick;
     const slot = id ? planSlot(id, pool) : null;
@@ -1908,7 +1912,7 @@ function renderPlan() {
     <p class="small muted">${plan.known
       ? `${effective().slots} slotun ${plan.busyJobs.length} tanesi dolu (son çekim), <b>${plan.freeAuto} boş slot</b>.`
       : `Forge bilgisi henüz çekilmedi, ${effective().slots} slotun hepsi boş sayıldı ("Sack'lerden çek" ile dolu slotlar düşülür).`}
-      Öneri Mining kârları itemlerinden: önce hiçbir şey satın almadan elindekiyle yapılabilenler, sonra saatlik kâr (elindeki malzeme satış değeriyle sayılır; 10 dk'dan kısa forgelar önerilmez ama seçilebilir). Değiştirmek için listeden seç; seçimin bu tarayıcıda kaydedilir.</p>
+      Öneri: elindekiyle hiçbir şey satın almadan yapılabilen Plate ya da Refined (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır); hiçbiri olmuyorsa Glacite Amalgamation. Perfect'ler önerilmez ama listeden seçilebilir. Değiştirmek için listeden seç; seçimin bu tarayıcıda kaydedilir.</p>
     <div class="controls"><label>Kaç slot için <input type="number" min="0" max="20" step="1" data-plan-count placeholder="${plan.freeAuto}" value="${fp.count ?? ''}"></label>
       <span class="muted small">Boş bırakırsan boş slot sayısı kullanılır.</span></div>`;
   if (!plan.slots.length) { box.innerHTML = head + '<p class="muted small">Boş slot yok.</p>'; return; }
