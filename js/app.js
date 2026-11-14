@@ -31,6 +31,7 @@ const DEFAULTS = {
   sackFetch: null, // { profile, sig, changedAt, items, fetchedAt }: the last pull from the sacks
   forging: null, // [{ id, slot, start }]: mining-route items in the forge at the last sack pull
   forgeAll: null, // every forge job at the last sack pull, for the "done" notifications
+  planAllow: null, // Forge planı: item ids the suggestion may use (null = PLAN_FIRST + Glacite Amalgamation)
   forgePlan: { count: null, pick: {}, savedAt: 0 }, // Forge planı: slot count (null = free slots), slot index -> item id ('' = empty); missing = suggestion
   forgeNotify: false, forgeNotified: {}, // notify when a forge is done; keys `${slot}:${start}` already notified
 };
@@ -1777,15 +1778,18 @@ function perfectRoute(label, product, inputs, stages) {
   };
 }
 // ---------- forge plan ----------
-// Suggests what to put into each free forge slot (Mining tab items only), lets the player change it,
+// Suggests what to put into each free forge slot, lets the player change it (any forge recipe),
 // keeps the choice in the browser and lists what is needed: held, crafted from held lower forms
-// (Rough → Flawed → Fine, raw → Enchanted…), bought. Suggested: a Plate/Refined that needs nothing bought
-// (best per hour), else Glacite Amalgamation; never Perfect items (Mito). Forge-made inputs (Plate's Refined,
+// (Rough → Flawed → Fine, raw → Enchanted…), bought. Suggested: a ticked item ("Önerilecek itemler") that needs
+// nothing bought (best per hour), else Glacite Amalgamation (Mito). Forge-made inputs (Plate's Refined,
 // Amalgamation…) are not forged here: they are held or bought. "Mod için kopyala" gives the list to
 // the Minecraft mod (/kazanc forge yukle reads it from the clipboard).
 const PLAN_PREFIX = 'MPC-PLAN1 ';
-// Suggested first, when they can be made from what is held: Plates and Refined (Mito, 2026-11-14).
-const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'REFINED_TUNGSTEN', 'REFINED_UMBER', 'REFINED_MITHRIL', 'REFINED_TITANIUM'];
+// Ticked by default in "Önerilecek itemler": Tungsten/Umber Plate, Perfect Plate, Refined Tungsten/Umber (Mito, 2026-11-14).
+const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE', 'REFINED_TUNGSTEN', 'REFINED_UMBER'];
+// Mito ticks which forge items the suggestion may use ("Önerilecek itemler"); the default is the list above plus Amalgamation.
+const PLAN_FALLBACK = 'GLACITE_AMALGAMATION';
+const planAllowed = () => new Set(S.planAllow || [...PLAN_FIRST, PLAN_FALLBACK]);
 // Every forge recipe can be picked by hand (Mito, 2026-11-14); only the suggestion keeps the rules above.
 function planIds() {
   return [...new Set(recipes.map((r) => r.id))];
@@ -1890,16 +1894,17 @@ function forgePlan() {
   const f = planFree();
   const ids = planIds();
   const pool = planPool();
+  const allowed = planAllowed();
   const out = [];
   for (let i = 0; i < f.free; i++) {
     const pick = fp.pick?.[i];
     // The suggestion for this slot, with what the earlier slots already used.
-    // Mito: never Perfect items; a Plate or Refined made from what is held (nothing bought), else Glacite Amalgamation.
-    const cands = PLAN_FIRST.filter((id) => forgeRecipe(id))
+    // Mito: only the ticked items; one made from what is held (nothing bought), best per hour; else Glacite Amalgamation.
+    const cands = [...allowed].filter((id) => forgeRecipe(id))
       .map((id) => planSlot(id, { ...pool }))
       .filter((c) => c.profit != null && c.buys === 0)
       .sort((a, b) => b.hour - a.hour);
-    if (!cands.length && forgeRecipe('GLACITE_AMALGAMATION')) cands.push(planSlot('GLACITE_AMALGAMATION', { ...pool }));
+    if (!cands.length && forgeRecipe(PLAN_FALLBACK)) cands.push(planSlot(PLAN_FALLBACK, { ...pool }));
     const best = cands[0]?.id || '';
     const id = pick == null || (pick && !forgeRecipe(pick)) ? best : pick;
     const before = { ...pool };
@@ -1945,7 +1950,8 @@ function renderPlan() {
     <p class="small muted">${plan.known
       ? `${effective().slots} slotun ${plan.busyJobs.length} tanesi dolu (son çekim), <b>${plan.freeAuto} boş slot</b>.`
       : `Forge bilgisi henüz çekilmedi, ${effective().slots} slotun hepsi boş sayıldı ("Sack'lerden çek" ile dolu slotlar düşülür).`}
-      Öneri: elindekiyle hiçbir şey satın almadan yapılabilen Plate ya da Refined (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır); hiçbiri olmuyorsa Glacite Amalgamation. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
+      Öneri sadece <b>önerilecek itemler</b>den yapılır: elindekiyle hiçbir şey satın almadan yapılabilenler (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır); hiçbiri olmuyorsa Glacite Amalgamation. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
+    <p><button type="button" class="pick-btn" data-allow-open>⚙ Önerilecek itemler <span class="badge">${planAllowed().size} seçili</span></button></p>
     <div class="controls"><label>Kaç slot için <input type="number" min="0" max="20" step="1" data-plan-count placeholder="${plan.freeAuto}" value="${fp.count ?? ''}"></label>
       <span class="muted small">Boş bırakırsan boş slot sayısı kullanılır.</span></div>`;
   if (!plan.slots.length) { box.innerHTML = head + '<p class="muted small">Boş slot yok.</p>'; return; }
@@ -2031,6 +2037,64 @@ function renderPick() {
   $('#pickList').innerHTML = rows || '<tr><td colspan="5" class="muted">Bu filtreyle tarif yok.</td></tr>';
   $('#pickNote').textContent = `${list.length} tarif. Kâr: satış − alınacaklar − elindeki malzemenin satış değeri; önceki slotlarda kullanılanlar düşülür. "Elinde" yalnız sack'teki mining itemleri ve çekilen Refined/Plate/Amalgamation; diğer malzemeler (ör. Drill Motor) alınacak sayılır.`;
 }
+// ---------- "Önerilecek itemler": which forge items the suggestion may use ----------
+const allowUI = { q: '' };
+function planAllowOpen() {
+  allowUI.q = '';
+  $('#allowSearch').value = '';
+  renderAllow();
+  const d = $('#planAllow');
+  if (!d.open) d.showModal();
+}
+function renderAllow() {
+  const allowed = planAllowed();
+  const pool = planPool();
+  const q = allowUI.q.trim().toLocaleLowerCase('tr-TR');
+  const ids = planIds().filter((id) => !q || anyName(id).toLocaleLowerCase('tr-TR').includes(q) || id.toLowerCase().includes(q))
+    .sort((a, b) => planRank(a) - planRank(b));
+  const groups = PLAN_CATS.map(([k, label]) => [k, label, ids.filter((id) => planCat(id) === k)]).filter((g) => g[2].length);
+  $('#allowCount').textContent = `${allowed.size} seçili`;
+  $('#allowList').innerHTML = groups.map(([k, label, list]) => {
+    const on = list.filter((id) => allowed.has(id)).length;
+    return `<section class="allow-group"><div class="allow-head"><b>${label}</b> <span class="muted small">${on}/${list.length}</span>
+        <button type="button" class="ghost small" data-allow-all="${k}">${on === list.length ? 'Hepsini kaldır' : 'Hepsini seç'}</button></div>
+      <div class="allow-grid">${list.map((id) => {
+        const c = planSlot(id, { ...pool });
+        return `<label class="check allow-item${allowed.has(id) ? ' on' : ''}"><input type="checkbox" data-allow-id="${esc(id)}"${allowed.has(id) ? ' checked' : ''}>
+          <span>${esc(anyName(id))}${id === PLAN_FALLBACK ? ' <span class="tag">yedek</span>' : ''}<span class="muted small"> ${c.hour == null ? 'fiyat yok' : coins(c.hour) + '/s'}${c.buys === 0 ? ' <span class="pos">✓</span>' : ''}</span></span></label>`;
+      }).join('')}</div></section>`;
+  }).join('') || '<p class="muted">Bu aramayla tarif yok.</p>';
+}
+function planAllowSet(ids) {
+  S.planAllow = [...ids];
+  save(); renderAllow(); renderPlan();
+}
+function planAllowEvents() {
+  const d = $('#planAllow');
+  d.addEventListener('click', (ev) => {
+    if (ev.target === d) return d.close();
+    const b = ev.target.closest('button');
+    if (!b) return;
+    const x = b.dataset;
+    if (x.allowAll) {
+      const allowed = planAllowed();
+      const list = planIds().filter((id) => planCat(id) === x.allowAll);
+      const all = list.every((id) => allowed.has(id));
+      for (const id of list) all ? allowed.delete(id) : allowed.add(id);
+      planAllowSet(allowed);
+    } else if ('allowDefault' in x) { S.planAllow = null; save(); renderAllow(); renderPlan(); }
+    else if ('allowNone' in x) planAllowSet([]);
+    else if ('allowClose' in x) d.close();
+  });
+  d.addEventListener('change', (ev) => {
+    const id = ev.target.dataset.allowId;
+    if (id == null) return;
+    const allowed = planAllowed();
+    ev.target.checked ? allowed.add(id) : allowed.delete(id);
+    planAllowSet(allowed);
+  });
+  $('#allowSearch').addEventListener('input', (ev) => { allowUI.q = ev.target.value; renderAllow(); });
+}
 function planPickChoose(id) {
   const fp = S.forgePlan;
   fp.pick = { ...fp.pick, [pickUI.slot]: id };
@@ -2068,6 +2132,7 @@ function planChange(el) {
 }
 async function planClick(ev) {
   const el = ev.target;
+  if (el.closest('[data-allow-open]')) { planAllowOpen(); return; }
   const open = el.closest('[data-plan-open]');
   if (open) { planPickOpen(Number(open.dataset.planOpen)); return; }
   if ('planReset' in el.dataset) {
@@ -2905,6 +2970,7 @@ function wire() {
   $('#mineSackBtn').addEventListener('click', fetchSacks);
   $('#minePlan').addEventListener('click', planClick);
   planPickEvents();
+  planAllowEvents();
   $('#mineForge').addEventListener('change', (ev) => { if (ev.target.id === 'forgeNotify') setForgeNotify(ev.target.checked); });
   // Checked every 20 s; the "Kalan" column is refreshed with it.
   setInterval(() => {

@@ -174,3 +174,11 @@ dialog.pick { width: min(820px, calc(100vw - 32px)); }
 #pickList tr.picked { background: var(--surface-2); }
 #pickList tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 #pickList tr.pick-group th { background: var(--bg); color: var(--text-secondary); font-size: 12px; text-transform: none; position: sticky; top: 33px; }
+/* Forge plan: which items may be suggested */
+.allow-wrap { max-height: min(62vh, 560px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.allow-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.allow-head button { margin-left: auto; font-size: 12px; }
+.allow-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 12px; }
+.allow-item { align-items: flex-start; padding: 4px 6px; border-radius: 6px; font-size: 13px; color: var(--text-primary); }
+.allow-item.on { background: var(--surface-2); }
+.allow-item input { margin-top: 3px; }
