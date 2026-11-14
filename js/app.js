@@ -2082,7 +2082,7 @@ function needMakeVsBuy(n, acc = []) {
   for (const k of n.kids || []) needMakeVsBuy(k, acc);
   return acc;
 }
-function needCard(p) {
+function needCard(p, best) {
   const verdict = p.missing.length
     ? `<b class="neg">✗ Yeterli malzeme yok:</b> ${p.missing.map((x) => `${fmtN(x.n)}× ${esc(anyName(x.id))}`).join(', ')} satın alman lazım.`
     : `<b class="pos">✓ Elindekiyle yapılabilir.</b>`;
@@ -2091,12 +2091,13 @@ function needCard(p) {
     const d = x.buy - x.make;
     return `${esc(anyName(x.id))}'i yapmak, satın almaktan <b class="${d >= 0 ? 'pos' : 'neg'}">${coins(Math.abs(d))} ${d >= 0 ? 'ucuz' : 'pahalı'}</b> (yapmak ${coins(x.make)}, Refined satış değeriyle; almak ${coins(x.buy)})`;
   });
-  return `<div class="need-card">
-    <h4>1× ${esc(anyName(p.id))}${p.already ? ` <span class="tag">sende zaten ${fmtN(p.already)} var</span>` : ''}</h4>
+  const cls = p.profit == null ? '' : p.profit >= 0 ? 'pos' : 'neg';
+  return `<div class="need-card${p === best ? ' need-best' : ''}">
+    <h4>1× ${esc(anyName(p.id))}${p === best ? ' <span class="tag pos">En kârlı</span>' : ''}${p.already ? ` <span class="tag">sende zaten ${fmtN(p.already)} var</span>` : ''}</h4>
+    <div class="need-profit ${cls}">${p.profit == null ? 'Kâr: —' : `${p.profit >= 0 ? 'Kâr' : 'Zarar'}: ${p.profit >= 0 ? '+' : ''}${coins(p.profit)}`}</div>
     <p class="small">${verdict}${extras}</p>
     <div class="small need-tree">${needLines(p.root).join('')}</div>
-    <p class="small">Satın alınacaklar: <b>${coins(p.cash)}</b> · Satış (net): <b>${coins(p.sale)}</b> · Cebine giren: <b class="${p.cashProfit >= 0 ? 'pos' : 'neg'}">${coins(p.cashProfit)}</b>
-      · Kâr (elindekiler satış değeriyle): <b class="${p.profit >= 0 ? 'pos' : 'neg'}">${coins(p.profit)}</b>${p.sec ? ` · Forge süresi: ${duration(p.sec)}` : ''}</p>
+    <p class="small muted">Satış (net) ${coins(p.sale)} − satın alınacaklar ${coins(p.cash)} − kullandığın malzemelerin satış değeri ${coins(p.held)}${p.sec ? ` · Forge süresi: ${duration(p.sec)}` : ''}</p>
     ${mvb.length ? `<p class="muted small">${mvb.join('<br>')}</p>` : ''}
   </div>`;
 }
@@ -2104,10 +2105,24 @@ function needSection() {
   const ids = ['SKELETON_KEY', 'PERFECT_PLATE', ...NEED_METALS.flatMap((m) => [m.plate, m.refined])].filter((id) => forgeRecipe(id));
   const pool = needPool();
   const any = Object.values(pool).some((v) => v > 0);
-  const head = '<h3>Elimdeki malzeme yetiyor mu?</h3>';
-  if (!any) return `${head}<p class="muted small">"Sack'lerden çek" ya da yukarıya elindeki Refined/Plate sayısını yaz; her tarif için neyin sende olduğu, neyi yapıp neyi alman gerektiği burada çıkar.</p>`;
-  return `${head}<div class="need-grid">${ids.map((id) => needCard(needPlan(id))).join('')}</div>
-    <p class="muted small">Her kart yeni 1 tane yapmak için ve elindeki her şeyden ayrı ayrı hesaplanır (o itemden sende olanlar kullanılmaz). Önce sendeki kullanılır; Plate ve Refined sadece bütün Refined/Enchanted'ı sende varsa yapılır, yoksa satın alınır. Ham ve Enchanted Tungsten/Umber satılmadığı için "elindekiler" değerine katılmaz. Fiyatlar seçili alış/satış yöntemiyle.</p>`;
+  const head = '<h3>Elimdeki malzeme yetiyor mu? Ne yapmak kârlı?</h3>';
+  if (!any) return `${head}<p class="muted small">"Sack'lerden çek" ya da yukarıya elindeki Refined/Plate sayısını yaz; her tarif için neyin sende olduğu, neyi yapıp neyi alman gerektiği ve kârı burada çıkar.</p>`;
+  // Most profitable first; profit counts what you use from your holdings at its sale value.
+  const plans = ids.map(needPlan).sort((a, b) => (b.profit ?? -Infinity) - (a.profit ?? -Infinity));
+  const best = plans[0]?.profit != null && plans[0].profit > 0 ? plans[0] : null;
+  const rank = plans.map((p) => {
+    const cls = p.profit == null ? '' : p.profit >= 0 ? 'pos' : 'neg';
+    const how = p.missing.length ? `${p.missing.map((x) => esc(anyName(x.id))).join(', ')} alman lazım` : 'elindekiyle yapılır';
+    return `<li><b>${esc(anyName(p.id))}</b> yap → <b class="${cls}">${p.profit == null ? '—' : `${p.profit >= 0 ? '+' : ''}${coins(p.profit)}`}</b> <span class="muted small">(${how}${p.sec ? `, ${duration(p.sec)}` : ''})</span></li>`;
+  }).join('');
+  const summary = `<div class="need-summary">
+      <p>${best
+        ? `👉 <b>En kârlısı: 1× ${esc(anyName(best.id))} yapmak</b>, kâr <b class="pos">+${coins(best.profit)}</b>.`
+        : '<b class="neg">Hiçbiri kârlı değil</b>; elindekileri olduğu gibi satmak daha iyi.'}</p>
+      <ol class="small">${rank}</ol>
+    </div>`;
+  return `${head}${summary}<div class="need-grid">${plans.map((p) => needCard(p, best)).join('')}</div>
+    <p class="muted small">Kâr = satış − satın alacakların − kullandığın malzemelerin satış değeri (yani o malzemeleri satmaya göre ne kadar fazla kazanırsın). Her kart yeni 1 tane yapmak için ve elindeki her şeyden ayrı ayrı hesaplanır (o itemden sende olanlar kullanılmaz). Önce sendeki kullanılır; Plate ve Refined sadece bütün Refined/Enchanted'ı sende varsa yapılır, yoksa satın alınır. Ham ve Enchanted Tungsten/Umber satılmadığı için değerleri 0 sayılır. Fiyatlar seçili alış/satış yöntemiyle.</p>`;
 }
 
 function perfectSection() {
