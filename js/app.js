@@ -1986,6 +1986,130 @@ function refinedSection() {
   </div>`;
 }
 
+// ---------- is what I hold enough? ----------
+// For one of each target (Skeleton Key, Perfect Plate, Tungsten/Umber Plate, Refined), walk the
+// recipe: use what is held first, make the rest from held materials where the whole unit can be
+// made, and buy only what is still missing (Mito, 2026-11-14). A Plate or Refined is made only when
+// all its Refined / Enchanted come from what is held; Amalgamation, Mithril Plate and Bejeweled
+// Handle are bought unless held. Each target is checked on its own, from the full holdings.
+const NEED_METALS = REF_METALS.map((m) => MINE.find((x) => x.refined === m.refined)).filter(Boolean);
+const NEED_STRICT = new Set(NEED_METALS.flatMap((m) => [m.plate, m.refined, m.ench, m.raw]));
+function needPool() {
+  const pool = { ...Object.fromEntries(Object.entries(S.refHold || {}).map(([k, v]) => [k, Math.max(0, Math.floor(Number(v) || 0))])) };
+  for (const m of NEED_METALS) {
+    const { raw, ench } = mineHold(m);
+    pool[m.raw] = raw; pool[m.ench] = ench;
+  }
+  return pool;
+}
+function needRecipe(id) {
+  const m = NEED_METALS.find((x) => x.ench === id);
+  if (m) return { inputs: [{ id: m.raw, count: enchRatio(m) }], duration: 0, craft: true };
+  if (['SKELETON_KEY', 'PERFECT_PLATE', ...NEED_METALS.flatMap((x) => [x.plate, x.refined])].includes(id)) return forgeRecipe(id);
+  return null;
+}
+// Plates and Refined are made only from held metal; the Perfect Plate and the key take what is missing.
+const needStrictBelow = (id) => NEED_METALS.some((m) => m.plate === id || m.refined === id || m.ench === id);
+function needResolve(id, count, pool) {
+  const have = Math.min(pool[id] || 0, count);
+  pool[id] = (pool[id] || 0) - have;
+  const rest = count - have;
+  let made = 0, kids = null;
+  const r = rest ? needRecipe(id) : null;
+  if (r) {
+    const strict = needStrictBelow(id);
+    for (let m = rest; m >= 1; m--) {
+      const trial = { ...pool };
+      const ks = r.inputs.map((i) => needResolve(i.id, i.count * m, trial));
+      if (!strict || ks.every((k) => !NEED_STRICT.has(k.id) || k.bought === 0)) {
+        Object.assign(pool, trial); made = m; kids = ks; break;
+      }
+      if (!strict) break;
+    }
+  }
+  return { id, count, have, made, bought: rest - made, kids, craft: !!r?.craft, duration: r?.duration || 0 };
+}
+function needTotals(n, acc = { cash: 0, held: 0, missing: [], extras: [], cashOk: true }) {
+  if (n.bought) {
+    const u = marketBuy(n.id).unit;
+    if (u == null) acc.cashOk = false; else acc.cash += u * n.bought;
+    (NEED_STRICT.has(n.id) || n.id === 'PERFECT_PLATE' ? acc.missing : acc.extras).push({ id: n.id, n: n.bought, unit: u });
+  }
+  if (n.have) { const s = marketSell(n.id).net; acc.held += (s || 0) * n.have; }
+  for (const k of n.kids || []) needTotals(k, acc);
+  return acc;
+}
+function needWall(n) {
+  if (!n.made || n.craft) return Math.max(0, ...(n.kids || []).map(needWall));
+  const { slots, qfLevel } = effective();
+  const k = 1 - qfPercent(qfLevel) / 100;
+  return Math.ceil(n.made / Math.max(1, slots)) * n.duration * k + Math.max(0, ...(n.kids || []).map(needWall));
+}
+function needPlan(id) {
+  // A new one is made: the ones of this item already held are only mentioned, not used.
+  const pool = needPool();
+  const already = pool[id] || 0;
+  pool[id] = 0;
+  const root = needResolve(id, 1, pool);
+  const t = needTotals(root);
+  const sale = marketSell(id).net;
+  return { id, root, already, ...t, sale, sec: needWall(root),
+    cashProfit: sale == null || !t.cashOk ? null : sale - t.cash,
+    profit: sale == null || !t.cashOk ? null : sale - t.cash - t.held };
+}
+function needLines(n, depth = 0) {
+  const pad = depth ? ` style="margin-left:${depth * 18}px"` : '';
+  const name = esc(anyName(n.id));
+  const out = [];
+  const parts = [];
+  if (n.have) parts.push(`<span class="pos">✓ sende ${fmtN(n.have)}</span>`);
+  if (n.made) parts.push(`🔨 ${fmtN(n.made)} ${n.craft ? 'craftla' : 'forgela'}`);
+  if (n.bought) {
+    const u = marketBuy(n.id).unit;
+    parts.push(`<span class="${NEED_STRICT.has(n.id) || n.id === 'PERFECT_PLATE' ? 'neg' : ''}">🛒 ${fmtN(n.bought)} al (${coins(u == null ? null : u * n.bought)})</span>`);
+  }
+  out.push(`<div${pad}>${fmtN(n.count)}× ${name}: ${parts.join(' · ')}</div>`);
+  if (n.made) for (const k of n.kids) out.push(...needLines(k, depth + 1));
+  return out;
+}
+// A made Plate is compared to just buying it (held Refined at its sale value).
+function needMakeVsBuy(n, acc = []) {
+  if (n.made && NEED_METALS.some((m) => m.plate === n.id)) {
+    const t = n.kids.reduce((a, k) => needTotals(k, a), { cash: 0, held: 0, missing: [], extras: [], cashOk: true });
+    const buy = marketBuy(n.id).unit;
+    if (t.cashOk && buy != null) acc.push({ id: n.id, n: n.made, make: (t.cash + t.held), buy: buy * n.made });
+  }
+  for (const k of n.kids || []) needMakeVsBuy(k, acc);
+  return acc;
+}
+function needCard(p) {
+  const verdict = p.missing.length
+    ? `<b class="neg">✗ Yeterli malzeme yok:</b> ${p.missing.map((x) => `${fmtN(x.n)}× ${esc(anyName(x.id))}`).join(', ')} satın alman lazım.`
+    : `<b class="pos">✓ Elindekiyle yapılabilir.</b>`;
+  const extras = p.extras.length ? ` <span class="muted small">Ayrıca alınır: ${p.extras.map((x) => `${fmtN(x.n)}× ${esc(anyName(x.id))}`).join(', ')}.</span>` : '';
+  const mvb = needMakeVsBuy(p.root).map((x) => {
+    const d = x.buy - x.make;
+    return `${esc(anyName(x.id))}'i yapmak, satın almaktan <b class="${d >= 0 ? 'pos' : 'neg'}">${coins(Math.abs(d))} ${d >= 0 ? 'ucuz' : 'pahalı'}</b> (yapmak ${coins(x.make)}, Refined satış değeriyle; almak ${coins(x.buy)})`;
+  });
+  return `<div class="need-card">
+    <h4>1× ${esc(anyName(p.id))}${p.already ? ` <span class="tag">sende zaten ${fmtN(p.already)} var</span>` : ''}</h4>
+    <p class="small">${verdict}${extras}</p>
+    <div class="small need-tree">${needLines(p.root).join('')}</div>
+    <p class="small">Satın alınacaklar: <b>${coins(p.cash)}</b> · Satış (net): <b>${coins(p.sale)}</b> · Cebine giren: <b class="${p.cashProfit >= 0 ? 'pos' : 'neg'}">${coins(p.cashProfit)}</b>
+      · Kâr (elindekiler satış değeriyle): <b class="${p.profit >= 0 ? 'pos' : 'neg'}">${coins(p.profit)}</b>${p.sec ? ` · Forge süresi: ${duration(p.sec)}` : ''}</p>
+    ${mvb.length ? `<p class="muted small">${mvb.join('<br>')}</p>` : ''}
+  </div>`;
+}
+function needSection() {
+  const ids = ['SKELETON_KEY', 'PERFECT_PLATE', ...NEED_METALS.flatMap((m) => [m.plate, m.refined])].filter((id) => forgeRecipe(id));
+  const pool = needPool();
+  const any = Object.values(pool).some((v) => v > 0);
+  const head = '<h3>Elimdeki malzeme yetiyor mu?</h3>';
+  if (!any) return `${head}<p class="muted small">"Sack'lerden çek" ya da yukarıya elindeki Refined/Plate sayısını yaz; her tarif için neyin sende olduğu, neyi yapıp neyi alman gerektiği burada çıkar.</p>`;
+  return `${head}<div class="need-grid">${ids.map((id) => needCard(needPlan(id))).join('')}</div>
+    <p class="muted small">Her kart yeni 1 tane yapmak için ve elindeki her şeyden ayrı ayrı hesaplanır (o itemden sende olanlar kullanılmaz). Önce sendeki kullanılır; Plate ve Refined sadece bütün Refined/Enchanted'ı sende varsa yapılır, yoksa satın alınır. Ham ve Enchanted Tungsten/Umber satılmadığı için "elindekiler" değerine katılmaz. Fiyatlar seçili alış/satış yöntemiyle.</p>`;
+}
+
 function perfectSection() {
   const pp = forgeRecipe('PERFECT_PLATE'), sk = forgeRecipe('SKELETON_KEY');
   if (!pp || !sk) return '';
@@ -2029,7 +2153,7 @@ function perfectSection() {
       <tbody>${tr}</tbody>
     </table></div>
     <p class="muted small">${cheaper ? `Skeleton Key için ${cheaper === viaPlates ? '3 plate ile Perfect Plate\'i kendin forgelamak' : 'hazır Perfect Plate almak'} ${coins(diff)} daha ucuz. ` : ''}`
-    + `${S.metalOwnPlates ? 'Tungsten ve Umber Plate senin, maliyetleri satsan alacağın net fiyatla sayıldı. ' : ''}</p>`;
+    + `${S.metalOwnPlates ? 'Tungsten ve Umber Plate senin, maliyetleri satsan alacağın net fiyatla sayıldı. ' : ''}</p>${needSection()}`;
 }
 
 // ---------- profile ----------
