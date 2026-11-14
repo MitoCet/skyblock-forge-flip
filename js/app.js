@@ -1782,7 +1782,7 @@ function perfectRoute(label, product, inputs, stages) {
 // (Rough → Flawed → Fine, raw → Enchanted…), bought. Items that need nothing bought come first
 // (Mito: "bende olanlar öncelikli"), then by profit per hour. Forge-made inputs (Plate's Refined,
 // Amalgamation…) are not forged here: they are held or bought. "Mod için kopyala" gives the list to
-// the Minecraft mod (/kazanc liste yukle reads it from the clipboard).
+// the Minecraft mod (/kazanc forge yukle reads it from the clipboard).
 const PLAN_PREFIX = 'MPC-PLAN1 ';
 function planIds() {
   const ids = [...MINE.filter((m) => m.refined).map((m) => m.refined), 'TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE',
@@ -1949,7 +1949,7 @@ function renderPlan() {
     <tbody>${needRows}<tr><td colspan="5"><b>Satın alma toplamı</b></td><td class="num"><b>${coins(cost)}</b></td></tr></tbody></table></div>` : '<p class="muted small">Plan boş.</p>'}
     <p class="muted small">Sende: sack'ler (gemler, ham ve Enchanted) ve "Sack'lerden çek"in saydığı Refined/Plate/Amalgamation (sack, envanter, ender chest, storage). Eksik önce sendeki alt biçimden craftlanır (160 ham → Enchanted, 80 Rough → Flawed, 80 Flawed → Fine); kalan seçili alış yöntemiyle satın alınır.</p>
     <p><button type="button" class="primary" data-plan-copy ${top.length ? '' : 'disabled'}>📋 Mod için kopyala</button>
-      <span class="muted small" id="planCopyStatus">Oyunda <b>/kazanc liste yukle</b> yaz (ya da /kazanc menüsünde "Listeyi panodan yükle"): mod solda alışveriş listesini gösterir.</span></p>`;
+      <span class="muted small" id="planCopyStatus">Oyunda <b>/kazanc forge yukle</b> yaz (ya da /kazanc menüsünde "Forge planını panodan yükle"): mod solda alışveriş listesini gösterir.</span></p>`;
 }
 function planChange(el) {
   const fp = S.forgePlan;
@@ -1969,7 +1969,7 @@ async function planClick(ev) {
     const status = $('#planCopyStatus');
     try {
       await navigator.clipboard.writeText(text);
-      status.innerHTML = '<b class="pos">✓ Kopyalandı.</b> Oyunda <b>/kazanc liste yukle</b> yaz.';
+      status.innerHTML = '<b class="pos">✓ Kopyalandı.</b> Oyunda <b>/kazanc forge yukle</b> yaz.';
     } catch {
       status.textContent = 'Panoya kopyalanamadı (tarayıcı izin vermedi). Sayfayı yenileyip tekrar dene.';
     }
