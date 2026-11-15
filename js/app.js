@@ -1358,7 +1358,7 @@ function metalRoute(m, label, product, n, extraCost, leftover, stages, missing) 
 // Routes for `enchAmount` whole Enchanted pieces (raw left over is added by the caller).
 // Perfect Plate pair of a metal: the other metal, how many of its Plates its held Enchanted makes,
 // and what one own Plate is worth on this route (its sale + half the Perfect Plate's gain over
-// selling both Plates; only Mithril Plate bought). Null if the recipe or a price is missing.
+// selling both Plates; Mithril Plate bought), and with the other Plate bought too. Null if the recipe or a price is missing.
 function perfectPair(m) {
   const recipe = forgeRecipe('PERFECT_PLATE');
   if (!m.plate || !recipe?.inputs.some((i) => i.id === m.plate)) return null;
@@ -1368,10 +1368,14 @@ function perfectPair(m) {
   const bought = buy.reduce((t, i) => { const u = marketBuy(i.id).unit; return t == null || u == null ? null : t + u * i.count; }, 0);
   const sale = marketSell('PERFECT_PLATE').net, own = marketSell(m.plate).net, oth = marketSell(om.plate).net;
   const value = [bought, sale, own, oth].some((x) => x == null) ? null : own + (sale * (recipe.count || 1) - bought - own - oth) / 2;
+  // With the other metal's Plate bought too (Mito, 2026-11-15, later): only when that beats selling the Plate.
+  const othBuy = marketBuy(om.plate).unit;
+  const valueBuy = bought == null || sale == null || othBuy == null ? null : sale * (recipe.count || 1) - bought - othBuy;
+  const buyOk = valueBuy != null && own != null && valueBuy > own;
   const oh = mineHold(om), oRef = forgeRecipe(om.refined), oPlate = forgeRecipe(om.plate);
   const perE = (oRef?.inputs.find((i) => i.id === om.ench)?.count || 160) * (oPlate?.inputs.find((i) => i.id === om.refined)?.count || 4);
   const other = Math.floor((oh.ench + Math.floor(oh.raw / enchRatio(om))) / perE);
-  return { recipe, om, other, value, buy };
+  return { recipe, om, other, value, buy, valueBuy, buyOk };
 }
 
 function metalRoutes(m, enchAmount, rate = false) {
@@ -1430,20 +1434,24 @@ function metalRoutes(m, enchAmount, rate = false) {
         extras: ex2, per: refPer * perPlate,
       });
 
-      // One step further: the Plate into a Perfect Plate (Mito, 2026-11-15). Only Mithril Plate is
-      // bought; the other metal's Plate is forged from its own held Enchanted (never bought), so the
-      // route makes only as many as both metals cover. Its gain over selling the two Plates is split
-      // half and half between the Tungsten and Umber cards, so the two cards add up to one Perfect Plate.
+      // One step further: the Plate into a Perfect Plate (Mito, 2026-11-15). Mithril Plate is bought;
+      // the other metal's Plate comes from its own held Enchanted first (that gain is split half and half
+      // between the Tungsten and Umber cards, so the two cards add up to one Perfect Plate), then bought
+      // when that pays more than selling the Plate.
       const pp = perfectPair(m);
       if (pp) {
-        // Plates the other metal can't pair are sold as Plates.
-        const n = rate ? (pp.other >= 1 ? p : 0) : Math.min(p, pp.other);
+        // Paired with the other metal's own Plates first; the rest with a bought one when that pays
+        // more than selling the Plate (Mito, 2026-11-15), else sold as Plates.
+        const own = rate ? (pp.other >= 1 ? p : 0) : Math.min(p, pp.other);
+        const nb = pp.buyOk ? p - own : 0;
+        const n = own + nb;
         const r = metalRoute(m, `${refLabel} → Plate → Perfect Plate`, m.plate, p, one == null ? null : (one + refCost) * p,
           enchAmount - p * refPer * perPlate, [[p * perPlate, refR.duration], [p, plateR.duration], [n, pp.recipe.duration]], false);
-        const gross = pp.value == null || r.gross == null ? null : pp.value * n + (r.gross / Math.max(1, p)) * (p - n);
+        const gross = pp.value == null || r.gross == null ? null
+          : pp.value * own + (nb ? pp.valueBuy * nb : 0) + (r.gross / Math.max(1, p)) * (p - n);
         if (n > 0) rows.push({
           ...r, n, product: 'PERFECT_PLATE', gross, total: gross == null || r.extraCost == null ? null : gross - r.extraCost,
-          extras: ex2, per: refPer * perPlate, pair: pp, short: p - n,
+          extras: ex2, per: refPer * perPlate, pair: pp, own, nb, short: p - n,
         });
       }
     }
@@ -1643,7 +1651,11 @@ function mineSection(m) {
       + (r.per ? ` <span class="muted small">(${r.per} Enchanted/adet)</span>` : '')
       + (r.leftover > 0.001 ? `<br><span class="muted small">+ ${fmtAmt(r.leftover, 1)} Enchanted artar, sende kalır</span>` : '')
       + (c.rawLeft > 0 && r.product !== m.raw ? `<br><span class="muted small">+ ${fmtAmt(c.rawLeft)} ham artar, sende kalır</span>` : '')
-      + (r.pair ? `<br><span class="muted small">Sadece ${r.pair.buy.map((i) => esc(anyName(i.id))).join(', ')} alınır; ${esc(anyName(r.pair.om.plate))} kendi ${esc(r.pair.om.name)}'inden forgelanır (elindekiyle ${fmtN(r.pair.other)} tane). Perfect Plate'in iki Plate'i satmaya göre farkı ${esc(m.name)} ve ${esc(r.pair.om.name)} kartlarına yarı yarıya yazılır.${r.short ? ` <span class="warn">${fmtN(r.short)} tane için ${esc(r.pair.om.name)} yetmiyor, onlar ${esc(anyName(m.plate))} olarak satılır.</span>` : ''}</span>` : '');
+      + (r.pair ? `<br><span class="muted small">${r.pair.buy.map((i) => esc(anyName(i.id))).join(', ')} alınır.`
+        + (r.own ? ` ${fmtN(r.own)} tanesinde ${esc(anyName(r.pair.om.plate))} kendi ${esc(r.pair.om.name)}'inden forgelanır; bunların iki Plate'i satmaya göre farkı ${esc(m.name)} ve ${esc(r.pair.om.name)} kartlarına yarı yarıya yazılır.` : '')
+        + (r.nb ? ` ${fmtN(r.nb)} tanesi için ${esc(anyName(r.pair.om.plate))} satın alınır (${coins(marketBuy(r.pair.om.plate).unit)}), Plate'i satmaktan kârlı.` : '')
+        + (r.short ? ` <span class="warn">${fmtN(r.short)} tane ${esc(anyName(m.plate))} olarak satılır (${esc(r.pair.om.name)} yetmiyor, satın almak kârlı değil).</span>` : '')
+        + '</span>' : '');
     const ench = m.simple ? 0 : c.whole + c.rawLeft / enchRatio(m);
     // Sell rows of raw / Enchanted also show what the NPC pays (shown only, not a route).
     const npcUnit = !m.simple && (r.product === m.raw || r.product === m.ench) ? npcData?.npc[r.product] ?? null : null;
@@ -1992,10 +2004,8 @@ function forgePlan() {
     // Mito: only the ticked items; one made from what is held (nothing bought), best per hour; else Glacite Amalgamation.
     let cands = [...allowed].filter((id) => forgeRecipe(id) && !block.has(id))
       .map((id) => planSlot(id, { ...pool }))
-      .filter((c) => c.profit != null && (c.buys === 0 || (c.id === 'PERFECT_PLATE' && route.has(c.id)
-        // Perfect Plate: only Mithril Plate may be bought, both metal Plates must be held (Mito, 2026-11-15).
-        ? c.nodes.every((n) => n.id === 'MITHRIL_PLATE' || !n.bought)
-        : route.has(c.id) && c.nodes.some((n) => route.get(c.id).includes(n.id) && !n.bought))))
+      // Perfect Plate: one metal Plate held is enough, the other Plate and Mithril Plate may be bought (Mito, 2026-11-15).
+      .filter((c) => c.profit != null && (c.buys === 0 || (route.has(c.id) && c.nodes.some((n) => route.get(c.id).includes(n.id) && !n.bought))))
       .sort((a, b) => b.hour - a.hour);
     // Plate / Perfect Plate routes: the furthest step the held items make comes first (Perfect Plate,
     // then Plate, then Refined).
@@ -2071,7 +2081,7 @@ function renderPlan() {
     <p class="small muted">${plan.known
       ? `${effective().slots} slotun ${plan.busyJobs.length} tanesi dolu (son çekim), <b>${plan.freeAuto} boş slot</b>.`
       : `Forge bilgisi henüz çekilmedi, ${effective().slots} slotun hepsi boş sayıldı ("Sack'lerden çek" ile dolu slotlar düşülür).`}
-      Öneri sadece <b>önerilecek itemler</b>den yapılır: elindekiyle hiçbir şey satın almadan yapılabilenler (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır). Tungsten ve Umber'de Enchanted başına en kârlı yol önerilir (Anahtar, Refined, Plate ya da Perfect Plate; bir sonraki adım için malzeme yoksa önce o adım, yanında ne için olduğu yazar), Bejeweled Handle ve Amalgamation gibi ekler alınır; Perfect Plate için sadece Mithril Plate alınır, Tungsten ve Umber Plate'i kendi malzemenden; hiçbiri olmuyorsa elindeki Glacite yettiği kadar Glacite Amalgamation (eksik gemler alınır), Glacite yetmeyen slot boş kalır. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
+      Öneri sadece <b>önerilecek itemler</b>den yapılır: elindekiyle hiçbir şey satın almadan yapılabilenler (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır). Tungsten ve Umber'de Enchanted başına en kârlı yol önerilir (Anahtar, Refined, Plate ya da Perfect Plate; bir sonraki adım için malzeme yoksa önce o adım, yanında ne için olduğu yazar), Bejeweled Handle ve Amalgamation gibi ekler alınır; Perfect Plate'te öbür Plate önce kendi malzemenden, yetmezse kârlıysa satın alınır; hiçbiri olmuyorsa elindeki Glacite yettiği kadar Glacite Amalgamation (eksik gemler alınır), Glacite yetmeyen slot boş kalır. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
     <p><button type="button" class="pick-btn" data-allow-open>⚙ Önerilecek itemler <span class="badge">${planAllowed().size} seçili</span></button></p>
     <div class="controls"><label>Kaç slot için <input type="number" min="0" max="20" step="1" data-plan-count placeholder="${plan.freeAuto}" value="${fp.count ?? ''}"></label>
       <span class="muted small">Boş bırakırsan boş slot sayısı kullanılır.</span></div>`;

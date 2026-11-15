@@ -123,7 +123,9 @@ function bestPerEnch(m) {
         const bought = perfR.inputs.filter((i) => i.id !== m.plate && i.id !== om.plate)
           .reduce((t, i) => { const u = marketBuy(i.id); return t == null || u == null ? null : t + u * i.count; }, 0);
         if (pps != null && os != null && bought != null) {
-          const value = ps + (pps * perfR.count - bought - ps - os) / 2;
+          // Or the other Plate bought too, when that pays more (Mito, 2026-11-15, later).
+          const ob = marketBuy(om.plate);
+          const value = Math.max(ps + (pps * perfR.count - bought - ps - os) / 2, ob == null ? -Infinity : pps * perfR.count - bought - ob);
           routes.push(['perfect', (value - ex2 - ex * perPlate) / (refPer * perPlate)]);
         }
       }
