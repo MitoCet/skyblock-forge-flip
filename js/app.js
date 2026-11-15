@@ -2007,11 +2007,22 @@ function forgePlan() {
       // Perfect Plate: one metal Plate held is enough, the other Plate and Mithril Plate may be bought (Mito, 2026-11-15).
       .filter((c) => c.profit != null && (c.buys === 0 || (route.has(c.id) && c.nodes.some((n) => route.get(c.id).includes(n.id) && !n.bought))))
       .sort((a, b) => b.hour - a.hour);
-    // Plate / Perfect Plate routes: the furthest step the held items make comes first (Perfect Plate,
-    // then Plate, then Refined).
+    // Plate / Perfect Plate routes: a Plate the held Refined makes comes before more Refined.
     for (const m of MINE) {
       if (note.get(m.refined) && m.plate && cands.some((c) => c.id === m.plate)) cands = cands.filter((c) => c.id !== m.refined);
-      if (note.get(m.plate) === 'PERFECT_PLATE' && cands.some((c) => c.id === 'PERFECT_PLATE')) cands = cands.filter((c) => c.id !== m.plate && c.id !== m.refined);
+    }
+    // Perfect Plate needs one Tungsten and one Umber Plate: when one metal has more Plates (held, or
+    // Refined for them) than the other, the other metal's steps come first, before a Perfect Plate with a
+    // bought Plate (Mito, 2026-11-15).
+    const pm = MINE.filter((m) => m.plate && note.get(m.plate) === 'PERFECT_PLATE');
+    if (pm.length === 2) {
+      const plates = (m) => (pool[m.plate] || 0) + Math.floor((pool[m.refined] || 0) / 4);
+      const [a, b] = pm;
+      const short = plates(a) > plates(b) ? b : plates(b) > plates(a) ? a : null;
+      if (short) {
+        const first = (c) => (c.id === short.plate || c.id === short.refined ? 0 : 1);
+        cands = [...cands].sort((x, y) => first(x) - first(y));
+      }
     }
     // Amalgamation only while the held Glacite (Enchanted, or raw crafted up) covers it; missing gems are bought (Mito, 2026-11-15).
     let glaciteShort = null;
