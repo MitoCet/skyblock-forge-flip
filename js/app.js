@@ -1291,7 +1291,8 @@ const MINE = [
   // offered, and what is left over after the last full forge stays with you (counted as 0).
   { id: 'TUNGSTEN', noSell: true, name: 'Tungsten', raw: 'TUNGSTEN', ench: 'ENCHANTED_TUNGSTEN', refined: 'REFINED_TUNGSTEN', plate: 'TUNGSTEN_PLATE', key: 'TUNGSTEN_KEY' },
   { id: 'UMBER', noSell: true, name: 'Umber', raw: 'UMBER', ench: 'ENCHANTED_UMBER', refined: 'REFINED_UMBER', plate: 'UMBER_PLATE', key: 'UMBER_KEY' },
-  { id: 'GLACITE', name: 'Glacite', raw: 'GLACITE', ench: 'ENCHANTED_GLACITE', refined: 'GLACITE_AMALGAMATION', refLabel: 'Glacite Amalgamation', preferRefined: true },
+  // Glacite is never sold raw or Enchanted (Mito, 2026-11-15): only Glacite Amalgamation.
+  { id: 'GLACITE', noSell: true, name: 'Glacite', raw: 'GLACITE', ench: 'ENCHANTED_GLACITE', refined: 'GLACITE_AMALGAMATION', refLabel: 'Glacite Amalgamation', preferRefined: true },
   { id: 'MITHRIL', name: 'Mithril', raw: 'MITHRIL_ORE', ench: 'ENCHANTED_MITHRIL', refined: 'REFINED_MITHRIL' },
   { id: 'TITANIUM', name: 'Titanium', raw: 'TITANIUM_ORE', ench: 'ENCHANTED_TITANIUM', refined: 'REFINED_TITANIUM' },
   { id: 'HARD_STONE', noSell: true, name: 'Hard Stone', raw: 'HARD_STONE', ench: 'ENCHANTED_HARD_STONE', craftUp: 'CONCENTRATED_STONE' },
@@ -1433,7 +1434,9 @@ function mineCalc(m) {
   // until the page is reloaded (not saved).
   const pick = m.preferRefined ? mineRouteView[m.id] : S.mineRoute[m.id];
   const chosen = rows.find((r) => r.label === pick)
-    || (m.preferRefined && rows.find((r) => r.product === m.refined && r.total != null && r.n > 0)) || best;
+    || (m.preferRefined && rows.find((r) => r.product === m.refined && r.total != null && r.n > 0)) || best
+    // Not enough for even one: still the forge route (0 coins, all kept), never a sell route.
+    || (m.preferRefined && rows.find((r) => r.product === m.refined)) || null;
   return { raw, ench, whole, rawLeft, rows, best, chosen, has: raw > 0 || ench > 0 };
 }
 
@@ -1672,12 +1675,20 @@ function gemTotals() {
   return { chosen: chosen.reduce((a, p) => a + p.total, 0), best: best.reduce((a, p) => a + p.total, 0), has: chosen.length > 0 };
 }
 
+// Chosen route that can't make even one piece: what is missing (it all stays with you, 0 coins).
+function shortText(m, c) {
+  const r = c.chosen;
+  if (!r || r.n > 0 || !r.per || m.simple) return null;
+  const have = c.whole + c.rawLeft / enchRatio(m);
+  return `${anyName(r.product)} için yetmiyor: ${fmtAmt(Math.ceil(r.per - have))} ${anyName(m.ench)} eksik, sende kalır`;
+}
+
 function renderMineTotal() {
   const box = $('#mineTotal');
   const lines = MINE.flatMap((m) => {
     const c = mineCalc(m), h = craftedCalc(m);
     return [
-      c.has && { id: m.id, name: m.name, what: c.chosen ? `${c.chosen.label}${c.chosen.n ? `: ${fmtAmt(c.chosen.n)}× ${anyName(c.chosen.product)}` : ''}` : '—',
+      c.has && { id: m.id, name: m.name, what: shortText(m, c) ?? (c.chosen ? `${c.chosen.label}${c.chosen.n ? `: ${fmtAmt(c.chosen.n)}× ${anyName(c.chosen.product)}` : ''}` : '—'),
         total: c.chosen?.total ?? null, best: c.best?.total ?? null, time: c.chosen?.wallSec || 0 },
       // Held crafted forms: their own row, sold as they are.
       h.held.length && { id: `HELD_${m.id}`, name: `↳ ${m.name}: elindeki hazır`, sub: true, what: `Olduğu gibi sat: ${h.held.map((r) => `${fmtAmt(r.n)}× ${anyName(r.id)}`).join(', ')}`,
