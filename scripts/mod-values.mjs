@@ -113,11 +113,19 @@ function bestPerEnch(m) {
     if (plateR && perPlate && ex != null) {
       const ps = marketSell(m.plate), ex2 = extraCost(plateR, m.refined);
       if (ps != null && ex2 != null) routes.push(['plate', (ps * plateR.count - ex2 - ex * perPlate) / (refPer * perPlate)]);
-      // Plate → Perfect Plate, the other Plates bought (site route 'Refined → Plate → Perfect Plate', Mito 2026-11-15).
+      // Plate → Perfect Plate (site route 'Refined → Plate → Perfect Plate', Mito 2026-11-15): only Mithril
+      // Plate is bought, the other metal's Plate is the player's own; the gain over selling both Plates is
+      // split half and half between Tungsten and Umber, as on the site's cards.
       const perfR = forgeRecipe('PERFECT_PLATE');
-      if (ex2 != null && perfR?.inputs.some((i) => i.id === m.plate)) {
-        const pps = marketSell('PERFECT_PLATE'), ex3 = extraCost(perfR, m.plate);
-        if (pps != null && ex3 != null) routes.push(['perfect', (pps * perfR.count - ex3 - ex2 - ex * perPlate) / (refPer * perPlate)]);
+      const om = MINE.find((x) => x !== m && x.plate && perfR?.inputs.some((i) => i.id === x.plate));
+      if (ex2 != null && om && perfR.inputs.some((i) => i.id === m.plate)) {
+        const pps = marketSell('PERFECT_PLATE'), os = marketSell(om.plate);
+        const bought = perfR.inputs.filter((i) => i.id !== m.plate && i.id !== om.plate)
+          .reduce((t, i) => { const u = marketBuy(i.id); return t == null || u == null ? null : t + u * i.count; }, 0);
+        if (pps != null && os != null && bought != null) {
+          const value = ps + (pps * perfR.count - bought - ps - os) / 2;
+          routes.push(['perfect', (value - ex2 - ex * perPlate) / (refPer * perPlate)]);
+        }
       }
     }
   }
