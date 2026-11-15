@@ -2020,7 +2020,9 @@ function forgePlan() {
       const [a, b] = pm;
       const short = plates(a) > plates(b) ? b : plates(b) > plates(a) ? a : null;
       if (short) {
-        const first = (c) => (c.id === short.plate || c.id === short.refined ? 0 : 1);
+        // A Perfect Plate both held Plates already make (only Mithril Plate bought) still comes first (Mito).
+        const ownPerfect = (c) => c.id === 'PERFECT_PLATE' && c.nodes.every((n) => n.id === 'MITHRIL_PLATE' || !n.bought);
+        const first = (c) => (ownPerfect(c) ? 0 : c.id === short.plate || c.id === short.refined ? 1 : 2);
         cands = [...cands].sort((x, y) => first(x) - first(y));
       }
     }
