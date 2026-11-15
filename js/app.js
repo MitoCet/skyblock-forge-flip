@@ -1411,6 +1411,19 @@ function metalRoutes(m, enchAmount) {
           enchAmount - p * refPer * perPlate, [[p * perPlate, refR.duration], [p, plateR.duration]], false),
         extras: ex2, per: refPer * perPlate,
       });
+
+      // One step further: the Plate into a Perfect Plate (Mito, 2026-11-15). The other Plates of the
+      // recipe (the other metal's Plate, Mithril Plate) are bought, like the other extras.
+      const perfR = forgeRecipe('PERFECT_PLATE');
+      if (perfR?.inputs.some((i) => i.id === m.plate)) {
+        const ex3 = extras(perfR, m.plate);
+        const one3 = one == null || ex3.some((e) => e.total == null) ? null : ex3.reduce((t, e) => t + e.total, 0);
+        rows.push({
+          ...metalRoute(m, `${refLabel} → Plate → Perfect Plate`, 'PERFECT_PLATE', p, one3 == null ? null : (one + one3 + refCost) * p,
+            enchAmount - p * refPer * perPlate, [[p * perPlate, refR.duration], [p, plateR.duration], [p, perfR.duration]], false),
+          extras: [...ex2, ...ex3], per: refPer * perPlate,
+        });
+      }
     }
   }
   return rows;
@@ -1809,24 +1822,36 @@ const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE', 'REFINED_T
 // The keys joined the defaults later: tick them once in a list saved before that.
 if (S.planAllow && !S.planKeysAdded) S.planAllow = [...new Set([...S.planAllow, 'TUNGSTEN_KEY', 'UMBER_KEY', 'SKELETON_KEY'])];
 S.planKeysAdded = true;
-// Tungsten/Umber: the suggestion follows the Mining card's most profitable route for the held raw/Enchanted
-// (Anahtar → key, Refined → Refined, Refined → Plate → Plate when the Refined is held, else Refined first);
-// the metal's other forge items are not suggested (Mito, 2026-11-15). No raw/Enchanted held: no limit.
-// Like the card, the route item only needs the metal held (Enchanted, or Refined for the Plate); its
-// extras (Bejeweled Handle, Glacite Amalgamation) are bought. `route` maps such an item to its metal input.
+// Tungsten/Umber: the suggestion follows the route that pays the most per Enchanted (Mito, 2026-11-15:
+// Anahtar, Refined, Plate or Perfect Plate, also when what is held doesn't make a whole Plate yet, since
+// more is mined): key → key; Refined → Refined; Plate → Plate when the Refined is held, else Refined;
+// Perfect Plate → Perfect Plate when the Plate is held, else Plate, else Refined. A step toward a later
+// item says so ("Perfect Plate için"). The metal's other forge items are not suggested. No raw/Enchanted
+// held: no limit. Like the card, the route item only needs the metal held (Enchanted, Refined, Plate);
+// its extras (Bejeweled Handle, Glacite Amalgamation, the other Plates) are bought.
+// `route` maps such an item to the held inputs it needs (one of them), `note` to the item it leads to.
+const PLAN_RATE_AMOUNT = 3840; // whole keys (192), Refined (160) and Plates (640), nothing left over
 function planRouteBlock() {
-  const block = new Set(), route = new Map();
+  const block = new Set(), route = new Map(), note = new Map();
+  const need = (id, input) => route.set(id, [...(route.get(id) || []), input]);
   for (const m of MINE) {
     if (!m.noSell || !m.key || !m.refined) continue;
-    const best = mineCalc(m).best;
+    const h = mineHold(m);
+    if (!h.raw && !h.ench) continue;
+    const best = metalRoutes(m, PLAN_RATE_AMOUNT).reduce((b, r) => (r.total != null && (!b || r.total > b.total) ? r : b), null);
     if (!best) continue;
-    const keep = best.product === m.key ? [m.key] : best.product === m.plate ? [m.plate, m.refined] : [m.refined];
-    for (const id of [m.key, m.refined, m.plate]) if (id && !keep.includes(id)) block.add(id);
-    for (const id of keep) route.set(id, id === m.plate ? m.refined : m.ench);
+    const chain = best.product === m.key ? [m.key] : best.product === m.refined ? [m.refined]
+      : best.product === m.plate ? [m.refined, m.plate] : [m.refined, m.plate, 'PERFECT_PLATE'];
+    for (const id of [m.key, m.refined, m.plate]) if (!chain.includes(id)) block.add(id);
+    const inputOf = { [m.key]: m.ench, [m.refined]: m.ench, [m.plate]: m.refined, PERFECT_PLATE: m.plate };
+    for (const id of chain) {
+      need(id, inputOf[id]);
+      if (id !== best.product) note.set(id, best.product);
+    }
   }
   // Skeleton Key: made from a held Perfect Plate, the Bejeweled Handle may be bought.
-  route.set('SKELETON_KEY', 'PERFECT_PLATE');
-  return { block, route };
+  need('SKELETON_KEY', 'PERFECT_PLATE');
+  return { block, route, note };
 }
 // Mito ticks which forge items the suggestion may use ("Önerilecek itemler"); the default is the list above plus Amalgamation.
 const PLAN_FALLBACK = 'GLACITE_AMALGAMATION';
@@ -1936,7 +1961,7 @@ function forgePlan() {
   const ids = planIds();
   const pool = planPool();
   const allowed = planAllowed();
-  const { block, route } = planRouteBlock();
+  const { block, route, note } = planRouteBlock();
   const out = [];
   for (let i = 0; i < f.free; i++) {
     const pick = fp.pick?.[i];
@@ -1944,11 +1969,13 @@ function forgePlan() {
     // Mito: only the ticked items; one made from what is held (nothing bought), best per hour; else Glacite Amalgamation.
     let cands = [...allowed].filter((id) => forgeRecipe(id) && !block.has(id))
       .map((id) => planSlot(id, { ...pool }))
-      .filter((c) => c.profit != null && (c.buys === 0 || (route.has(c.id) && !c.nodes.some((n) => n.id === route.get(c.id) && n.bought))))
+      .filter((c) => c.profit != null && (c.buys === 0 || (route.has(c.id) && c.nodes.some((n) => route.get(c.id).includes(n.id) && !n.bought))))
       .sort((a, b) => b.hour - a.hour);
-    // Refined → Plate route: the Plate comes first when the held Refined makes it; Refined only otherwise.
+    // Plate / Perfect Plate routes: the furthest step the held items make comes first (Perfect Plate,
+    // then Plate, then Refined).
     for (const m of MINE) {
-      if (m.plate && cands.some((c) => c.id === m.plate)) cands = cands.filter((c) => c.id !== m.refined);
+      if (note.get(m.refined) && m.plate && cands.some((c) => c.id === m.plate)) cands = cands.filter((c) => c.id !== m.refined);
+      if (note.get(m.plate) === 'PERFECT_PLATE' && cands.some((c) => c.id === 'PERFECT_PLATE')) cands = cands.filter((c) => c.id !== m.plate && c.id !== m.refined);
     }
     // Amalgamation only while the held Glacite (Enchanted, or raw crafted up) covers it; missing gems are bought (Mito, 2026-11-15).
     let glaciteShort = null;
@@ -1962,7 +1989,7 @@ function forgePlan() {
     const id = pick == null || (pick && !forgeRecipe(pick)) ? best : pick;
     const before = { ...pool };
     const slot = id ? planSlot(id, pool) : null;
-    out.push({ i, id, best, manual: pick != null, slot, pool: before, glaciteShort });
+    out.push({ i, id, best, manual: pick != null, slot, pool: before, glaciteShort, goal: id && id === best ? note.get(id) : null });
   }
   return { ...f, ids, slots: out };
 }
@@ -2018,13 +2045,13 @@ function renderPlan() {
     <p class="small muted">${plan.known
       ? `${effective().slots} slotun ${plan.busyJobs.length} tanesi dolu (son çekim), <b>${plan.freeAuto} boş slot</b>.`
       : `Forge bilgisi henüz çekilmedi, ${effective().slots} slotun hepsi boş sayıldı ("Sack'lerden çek" ile dolu slotlar düşülür).`}
-      Öneri sadece <b>önerilecek itemler</b>den yapılır: elindekiyle hiçbir şey satın almadan yapılabilenler (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır). Tungsten ve Umber'de Mining kartındaki en kârlı yol önerilir (Anahtar, Refined ya da Plate; Plate için Refined yoksa önce Refined), Bejeweled Handle ve Amalgamation gibi ekler alınır; hiçbiri olmuyorsa elindeki Glacite yettiği kadar Glacite Amalgamation (eksik gemler alınır), Glacite yetmeyen slot boş kalır. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
+      Öneri sadece <b>önerilecek itemler</b>den yapılır: elindekiyle hiçbir şey satın almadan yapılabilenler (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır). Tungsten ve Umber'de Enchanted başına en kârlı yol önerilir (Anahtar, Refined, Plate ya da Perfect Plate; bir sonraki adım için malzeme yoksa önce o adım, yanında ne için olduğu yazar), Bejeweled Handle, Amalgamation ve diğer Plate'ler gibi ekler alınır; hiçbiri olmuyorsa elindeki Glacite yettiği kadar Glacite Amalgamation (eksik gemler alınır), Glacite yetmeyen slot boş kalır. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
     <p><button type="button" class="pick-btn" data-allow-open>⚙ Önerilecek itemler <span class="badge">${planAllowed().size} seçili</span></button></p>
     <div class="controls"><label>Kaç slot için <input type="number" min="0" max="20" step="1" data-plan-count placeholder="${plan.freeAuto}" value="${fp.count ?? ''}"></label>
       <span class="muted small">Boş bırakırsan boş slot sayısı kullanılır.</span></div>`;
   if (!plan.slots.length) { box.innerHTML = head + '<p class="muted small">Boş slot yok.</p>'; return; }
   const rows = plan.slots.map((s) => `<tr><td>${s.i + 1}</td>
-      <td><button type="button" class="pick-btn" data-plan-open="${s.i}">${s.id ? esc(anyName(s.id)) : '<span class="muted">— boş —</span>'} <span class="muted">▾</span></button>${!s.id && s.glaciteShort ? ` <span class="warn">Glacite yetmiyor: Glacite Amalgamation için ${fmtN(s.glaciteShort.need)} ${esc(anyName(s.glaciteShort.id))} lazım, kalan Glacite'in ${fmtN(s.glaciteShort.have)} ediyor (${fmtN(s.glaciteShort.need - s.glaciteShort.have)} eksik)</span>` : ''}${s.manual && s.slot?.buys ? ` <span class="warn">elindekiyle yapılamıyor, eksikler alınacak${s.best ? ` (öneri: ${esc(anyName(s.best))})` : ''}</span>` : ''} ${s.id && s.id === s.best ? '<span class="tag pos">öneri</span>' : s.manual ? '<span class="muted small">elle seçildi</span>' : ''}</td>
+      <td><button type="button" class="pick-btn" data-plan-open="${s.i}">${s.id ? esc(anyName(s.id)) : '<span class="muted">— boş —</span>'} <span class="muted">▾</span></button>${!s.id && s.glaciteShort ? ` <span class="warn">Glacite yetmiyor: Glacite Amalgamation için ${fmtN(s.glaciteShort.need)} ${esc(anyName(s.glaciteShort.id))} lazım, kalan Glacite'in ${fmtN(s.glaciteShort.have)} ediyor (${fmtN(s.glaciteShort.need - s.glaciteShort.have)} eksik)</span>` : ''}${s.manual && s.slot?.buys ? ` <span class="warn">elindekiyle yapılamıyor, eksikler alınacak${s.best ? ` (öneri: ${esc(anyName(s.best))})` : ''}</span>` : ''} ${s.id && s.id === s.best ? `<span class="tag pos">öneri</span>${s.goal ? ` <span class="muted small">→ ${esc(anyName(s.goal))} için</span>` : ''}` : s.manual ? '<span class="muted small">elle seçildi</span>' : ''}</td>
       <td class="num">${s.slot ? duration(s.slot.sec) : '—'}</td>
       <td class="num ${s.slot?.profit > 0 ? 'pos' : 'neg'}">${s.slot ? coins(s.slot.profit) : '—'}</td>
       <td class="num">${s.slot?.hour == null ? '—' : coins(s.slot.hour) + '/s'}</td></tr>`).join('');
@@ -2436,7 +2463,8 @@ function refinedSection() {
 // recipe: use what is held first, make the rest, and buy only the lowest missing inputs
 // (Mito, 2026-11-14). Amalgamation, Mithril Plate and Bejeweled Handle are bought unless held. Each target is checked on its own, from the full holdings.
 // Also read from sacks/storage for these cards (Mito, 2026-11-14: Mithril Plate counted, though rarely held).
-const NEED_HELD_EXTRA = ['MITHRIL_PLATE', 'PERFECT_PLATE'];
+// Bejeweled Handle is not a sack item: it is counted in the inventory, ender chest, storage and vault (Mito, 2026-11-15).
+const NEED_HELD_EXTRA = ['MITHRIL_PLATE', 'PERFECT_PLATE', 'BEJEWELED_HANDLE'];
 const NEED_METALS = REF_METALS.map((m) => MINE.find((x) => x.refined === m.refined)).filter(Boolean);
 const NEED_STRICT = new Set(NEED_METALS.flatMap((m) => [m.plate, m.refined, m.ench, m.raw]));
 function needPool() {

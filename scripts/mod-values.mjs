@@ -113,6 +113,12 @@ function bestPerEnch(m) {
     if (plateR && perPlate && ex != null) {
       const ps = marketSell(m.plate), ex2 = extraCost(plateR, m.refined);
       if (ps != null && ex2 != null) routes.push(['plate', (ps * plateR.count - ex2 - ex * perPlate) / (refPer * perPlate)]);
+      // Plate → Perfect Plate, the other Plates bought (site route 'Refined → Plate → Perfect Plate', Mito 2026-11-15).
+      const perfR = forgeRecipe('PERFECT_PLATE');
+      if (ex2 != null && perfR?.inputs.some((i) => i.id === m.plate)) {
+        const pps = marketSell('PERFECT_PLATE'), ex3 = extraCost(perfR, m.plate);
+        if (pps != null && ex3 != null) routes.push(['perfect', (pps * perfR.count - ex3 - ex2 - ex * perPlate) / (refPer * perPlate)]);
+      }
     }
   }
   if (m.preferRefined) {
