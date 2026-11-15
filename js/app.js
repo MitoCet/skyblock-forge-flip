@@ -1804,10 +1804,10 @@ function perfectRoute(label, product, inputs, stages) {
 // the Minecraft mod (/kazanc forge yukle reads it from the clipboard).
 const PLAN_PREFIX = 'MPC-PLAN1 ';
 // Ticked by default in "Önerilecek itemler": Tungsten/Umber Plate, Perfect Plate, Refined Tungsten/Umber (Mito, 2026-11-14),
-// Tungsten/Umber Key (Mito, 2026-11-15).
-const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE', 'REFINED_TUNGSTEN', 'REFINED_UMBER', 'TUNGSTEN_KEY', 'UMBER_KEY'];
+// Tungsten/Umber Key and Skeleton Key (Mito, 2026-11-15).
+const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE', 'REFINED_TUNGSTEN', 'REFINED_UMBER', 'TUNGSTEN_KEY', 'UMBER_KEY', 'SKELETON_KEY'];
 // The keys joined the defaults later: tick them once in a list saved before that.
-if (S.planAllow && !S.planKeysAdded) S.planAllow = [...new Set([...S.planAllow, 'TUNGSTEN_KEY', 'UMBER_KEY'])];
+if (S.planAllow && !S.planKeysAdded) S.planAllow = [...new Set([...S.planAllow, 'TUNGSTEN_KEY', 'UMBER_KEY', 'SKELETON_KEY'])];
 S.planKeysAdded = true;
 // Tungsten/Umber: the suggestion follows the Mining card's most profitable route for the held raw/Enchanted
 // (Anahtar → key, Refined → Refined, Refined → Plate → Plate when the Refined is held, else Refined first);
@@ -1824,6 +1824,8 @@ function planRouteBlock() {
     for (const id of [m.key, m.refined, m.plate]) if (id && !keep.includes(id)) block.add(id);
     for (const id of keep) route.set(id, id === m.plate ? m.refined : m.ench);
   }
+  // Skeleton Key: made from a held Perfect Plate, the Bejeweled Handle may be bought.
+  route.set('SKELETON_KEY', 'PERFECT_PLATE');
   return { block, route };
 }
 // Mito ticks which forge items the suggestion may use ("Önerilecek itemler"); the default is the list above plus Amalgamation.
