@@ -27,7 +27,7 @@ const DEFAULTS = {
   scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', gemHold: {}, gemCountLow: false,
   metalOwnPlates: false,
   refHold: {}, // held crafted/forged forms (Refined, Plate, key, Amalgamation…), shown apart from raw on the Mining cards
-  mine: null, mineRoute: {}, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
+  mine: null, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
   sackFetch: null, // { profile, sig, changedAt, items, fetchedAt }: the last pull from the sacks
   forging: null, // [{ id, slot, start }]: mining-route items in the forge at the last sack pull
   forgeAll: null, // every forge job at the last sack pull, for the "done" notifications
@@ -38,6 +38,8 @@ const DEFAULTS = {
 let S = load();
 // gemHold used to hold one { tier, qty } per gemstone; now it holds an amount per tier.
 for (const [t, h] of Object.entries(S.gemHold || {})) if (h && h.tier) S.gemHold[t] = { [h.tier]: h.qty || 0 };
+// Route clicks on the Mining cards are no longer saved: the most profitable route is the default.
+delete S.mineRoute;
 // The metal tab had one amount per metal, in raw or Enchanted pieces.
 if (!S.mine) {
   S.mine = {};
@@ -1429,10 +1431,11 @@ function mineCalc(m) {
     return r;
   });
   const best = rows.reduce((b, r) => (r.total != null && (r.n > 0 || r.product === m.ench) && (!b || r.total > b.total) ? r : b), null);
-  // preferRefined (Glacite, Mito 2026-11-12): the selected route is always the forge route
-  // (Amalgamation) even when another row is tagged "En kârlı"; a click on another route only lasts
-  // until the page is reloaded (not saved).
-  const pick = m.preferRefined ? mineRouteView[m.id] : S.mineRoute[m.id];
+  // The selected route is the most profitable one by default (Mito, 2026-11-15: a saved click kept
+  // e.g. Tungsten on 'Anahtar' after prices/amounts changed). A click on another route only lasts
+  // until the page is reloaded (not saved). preferRefined (Glacite, Mito 2026-11-12): the default
+  // is always the forge route (Amalgamation) even when another row is tagged "En kârlı".
+  const pick = mineRouteView[m.id];
   const chosen = rows.find((r) => r.label === pick)
     || (m.preferRefined && rows.find((r) => r.product === m.refined && r.total != null && r.n > 0)) || best
     // Not enough for even one: still the forge route (0 coins, all kept), never a sell route.
@@ -1454,7 +1457,7 @@ function craftedCalc(m) {
   return { rows, held, total: held.some((r) => r.total == null) ? null : held.reduce((t, r) => t + r.total, 0) };
 }
 
-// Route clicks for preferRefined materials, kept only for this page view.
+// Route clicks, kept only for this page view (never saved).
 const mineRouteView = {};
 
 const inTotal = (id) => S.mineInTotal[id] !== false;
@@ -1647,7 +1650,7 @@ function mineSection(m) {
       </tr></thead>
       <tbody>${tr}</tbody>
     </table></div>
-    <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı).${m.noSell ? ' Ham ya da Enchanted satış büyük miktarda gerçekçi olmadığı için seçenek değil; son forge\'a yetmeyen kısım sende kalır ve toplama katılmaz.' : ' Son forge\'a yetmeyen Enchanted ve ham artıkları satılmaz, sende kalır ve toplama katılmaz.'}</p>`
+    <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı; seçimin kaydedilmez, sayfa yenilenince en kârlıya döner).${m.noSell ? ' Ham ya da Enchanted satış büyük miktarda gerçekçi olmadığı için seçenek değil; son forge\'a yetmeyen kısım sende kalır ve toplama katılmaz.' : ' Son forge\'a yetmeyen Enchanted ve ham artıkları satılmaz, sende kalır ve toplama katılmaz.'}</p>`
     : '<p class="muted small">Adet yaz ya da yukarıdan "Sack\'lerden çek".</p>'}
     ${m.id === 'UMBER' || (m.id === 'TUNGSTEN' && S.mineView === 'TUNGSTEN') ? perfectSection() : ''}
     ${m.id === 'GLACITE' ? amalgSection() : ''}
@@ -3025,8 +3028,7 @@ function wire() {
     const el = ev.target, d = el.dataset;
     if (d.mine) S.mine[d.mine] = { ...S.mine[d.mine], [d.k]: Math.max(0, Math.floor(Number(el.value) || 0)) };
     else if (d.route) {
-      if (MINE.find((m) => m.id === d.route)?.preferRefined) mineRouteView[d.route] = el.value;
-      else S.mineRoute[d.route] = el.value;
+      mineRouteView[d.route] = el.value;
     }
     else if (d.mineTotal) S.mineInTotal[d.mineTotal] = el.checked;
     else if (d.refHold) S.refHold = { ...S.refHold, [d.refHold]: Math.max(0, Math.floor(Number(el.value) || 0)) };
