@@ -24,6 +24,7 @@
     <button class="tab" data-tab="craft">Craft mı al mı</button>
     <button class="tab" data-tab="sellcraft">Craftla mı sat mı</button>
     <button class="tab" data-tab="mine">Mining kârları</button>
+    <button class="tab" data-tab="plan">Forge planı</button>
     <button class="tab" data-tab="settings">Profil ve ayarlar</button>
   </nav>
 
@@ -331,8 +332,8 @@
         <span class="live-status muted small"></span>
       </div>
       <div class="live">
-        <button id="mineSackBtn" class="primary" type="button">Sack'lerden çek</button>
-        <span id="mineSackStatus" class="muted small">Tungsten, Umber, Glacite, Mithril, Titanium, Hard Stone, Refined Mineral, Glossy Gemstone, Suspicious Scrap ve gemstone adetlerini profilindeki sack'lerden doldurur; Refined ve Plate'leri sack'ler yanında envanter, ender chest ve storage'dan da sayar; forgede olan Refined, Plate, Glacite Amalgamation ve Perfect gemstone'ları da gösterir.</span>
+        <button id="mineSackBtn" class="primary sack-btn" type="button">Sack'lerden çek</button>
+        <span id="mineSackStatus" class="muted small sack-status">Tungsten, Umber, Glacite, Mithril, Titanium, Hard Stone, Refined Mineral, Glossy Gemstone, Suspicious Scrap ve gemstone adetlerini profilindeki sack'lerden doldurur; Refined ve Plate'leri sack'ler yanında envanter, ender chest ve storage'dan da sayar; forgede olan Refined, Plate, Glacite Amalgamation ve Perfect gemstone'ları da gösterir.</span>
       </div>
       <div class="seg" role="radiogroup" aria-label="Gösterilen">
         <label><input type="radio" name="mineView" value="all" data-setting="mineView"> Hepsi</label>
@@ -363,7 +364,6 @@
         <label class="check" title="NPC'ye satışta vergi yoktur. İşaretliyse gemstone hesabında Bazaar net fiyatı ile NPC fiyatından hangisi yüksekse o kullanılır."><input data-setting="scNpc" type="checkbox"> Gemstone'da NPC'ye satmayı da hesaba kat</label>
       </div>
       <div id="mineForge" class="card calc" hidden></div>
-      <div id="minePlan" class="card calc"></div>
       <div id="mineBody"></div>
       <div id="mineGem" hidden>
         <div class="card calc">
@@ -390,6 +390,32 @@
       </div>
       <div id="mineTotal" class="card calc"></div>
       <p class="muted small" id="metalNote"></p>
+    </section>
+
+    <section id="tab-plan" class="panel">
+      <div class="live">
+        <button class="primary live-btn" type="button" data-ah="off">Güncel fiyatları çek</button>
+        <span class="live-status muted small"></span>
+      </div>
+      <div class="live">
+        <button class="primary sack-btn" type="button">Sack'lerden çek</button>
+        <span class="muted small sack-status">Forgedeki dolu slotları ve elindeki malzemeyi (sack, envanter, ender chest, storage) profilinden doldurur; plan bunlara göre önerilir.</span>
+      </div>
+      <div class="controls">
+        <label>Alış (eksik malzemeler)
+          <select data-setting="buyMode">
+            <option value="instant">Anında alım</option>
+            <option value="order">Buy order</option>
+          </select>
+        </label>
+        <label>Bazaar satışı
+          <select data-setting="sellMode">
+            <option value="offer">Sell offer</option>
+            <option value="instant">Anında satış</option>
+          </select>
+        </label>
+      </div>
+      <div id="minePlan" class="card calc"><div class="empty">Yükleniyor…</div></div>
     </section>
 
     <section id="tab-settings" class="panel">

@@ -60,7 +60,7 @@ function effective() {
 // The open tab lives in the URL hash (#mine), so a refresh or a shared link opens the same tab.
 // Scroll position, search boxes, open rows and the open detail window are kept in sessionStorage:
 // they come back on refresh but a new visit starts clean.
-const TABS = ['best', 'compare', 'npc', 'craft', 'sellcraft', 'mine', 'settings'];
+const TABS = ['best', 'compare', 'npc', 'craft', 'sellcraft', 'mine', 'plan', 'settings'];
 const SEARCHES = ['search', 'npcSearch', 'craftSearch', 'scSearch'];
 let V = { scroll: {}, search: {}, craftOpen: null, scOpen: null, detail: null };
 try { V = { ...V, ...JSON.parse(sessionStorage.getItem('forgeflip-view') || '{}') }; } catch { /* blocked */ }
@@ -1751,7 +1751,6 @@ async function renderMine() {
   $('#mineGem').hidden = !gem;
   if (gem) { renderGemForge(); renderGemRank(); }
   renderForging();
-  renderPlan();
   renderMineTotal();
   $('#metalNote').textContent = 'Tarifler NotEnoughUpdates verisinden: anahtar, Refined ve Glacite Amalgamation doğrudan Enchanted malzemeden, Plate ise Refined + Glacite Amalgamation ile forgelanır. Ek malzemeler (Bejeweled Handle, Glacite Amalgamation, Fine gemler…) satın alınmış sayılır. '
     + `Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). Bir sonraki ürüne yetmeyen miktar Enchanted (ya da ham) olarak satılmış sayılır. `
@@ -1941,8 +1940,23 @@ function planText(plan, needs) {
   for (const s of plan.slots) if (s.id) forge[s.id] = (forge[s.id] || 0) + 1;
   return PLAN_PREFIX + JSON.stringify({ v: 1, at: Date.now(), forge: Object.entries(forge).map(([id, n]) => [id, anyName(id), n]), rows });
 }
+// The forge plan has its own tab (Mito, 2026-11-15); it needs the recipes and the market data first.
+async function renderPlanTab() {
+  const box = $('#minePlan');
+  if (!recipes.length) { box.innerHTML = '<div class="empty">Forge tarifleri yükleniyor…</div>'; return; }
+  if (!market) {
+    box.innerHTML = '<div class="empty">Fiyatlar yükleniyor…</div>';
+    try { await loadExtra(); } catch (err) {
+      console.error(err);
+      box.innerHTML = '<div class="empty">Bu bölümün verisi henüz yok. Fiyat toplayıcı bir sonraki çalışmasında (15 dakikada bir) oluşturacak.</div>';
+      return;
+    }
+  }
+  renderPlan();
+}
 function renderPlan() {
   const box = $('#minePlan');
+  if (!market) return;
   if (!box) return;
   const plan = forgePlan();
   const fp = S.forgePlan;
@@ -2644,15 +2658,18 @@ function fmtWhen(t) {
 
 // Shows what the last sack pull brought and how fresh it is.
 function renderSackStatus() {
-  const f = S.sackFetch, status = $('#mineSackStatus');
-  if (!f || !status) return;
+  const f = S.sackFetch;
+  if (!f) return;
   // Hypixel does not say when it last saved the profile, so the best sign of freshness is
   // whether the contents moved since an earlier pull.
   const same = f.changedAt && f.changedAt < f.fetchedAt
     ? ` · Sack ve forge içeriği ${fmtWhen(f.changedAt)} yapılan çekimden beri değişmedi. Oyunda yeni bir şey koyduysan Hypixel henüz kaydetmemiş olabilir; lobi ya da ada değiştirip birkaç dakika sonra tekrar dene.`
     : '';
-  status.dataset.live = '1';
-  status.textContent = `${f.profile} profilinin sack'lerinden alındı: ${f.items.join(', ') || 'hiçbir şey bulunamadı'}. Çekildi: ${fmtWhen(f.fetchedAt)}${same}`;
+  sackStatus(`${f.profile} profilinin sack'lerinden alındı: ${f.items.join(', ') || 'hiçbir şey bulunamadı'}. Çekildi: ${fmtWhen(f.fetchedAt)}${same}`, true);
+}
+// The "Sack'lerden çek" button is on the Mining and the Forge planı tabs; both show the same status.
+function sackStatus(text, live = false) {
+  document.querySelectorAll('.sack-status').forEach((el) => { el.dataset.live = live ? '1' : ''; el.textContent = text; });
 }
 
 // Counts the given item ids in the profile's inventory, ender chest, storage backpacks and personal vault
@@ -2691,9 +2708,9 @@ function refHoldNote(ids, sacks, held) {
 
 // Fills the mined amounts and the gemstone holdings from the player's sacks.
 async function fetchSacks() {
-  const btn = $('#mineSackBtn'), status = $('#mineSackStatus');
-  if (!S.username || !S.apiKey) { status.dataset.live = ''; status.textContent = 'Önce "Profil ve ayarlar" sekmesine kullanıcı adını ve API anahtarını gir.'; return; }
-  btn.disabled = true; status.dataset.live = ''; status.textContent = 'Sack\'ler çekiliyor…';
+  const btns = document.querySelectorAll('.sack-btn');
+  if (!S.username || !S.apiKey) { sackStatus('Önce "Profil ve ayarlar" sekmesine kullanıcı adını ve API anahtarını gir.'); return; }
+  btns.forEach((b) => { b.disabled = true; }); sackStatus('Sack\'ler çekiliyor…');
   try {
     const { profiles } = await getProfiles();
     const p = profiles.find((x) => x.profile_id === S.profileId) || profiles.find((x) => x.selected) || profiles[0];
@@ -2704,7 +2721,7 @@ async function fetchSacks() {
     markDoneForges();
     save();
     const sacks = member?.inventory?.sacks_counts ?? member?.sacks_counts;
-    if (!sacks) { renderMine(); throw new Error('Sack bilgisi gelmedi. Oyunda SkyBlock Menu → Settings → API Settings\'ten Inventory API\'yi aç, birkaç dakika sonra tekrar dene.'); }
+    if (!sacks) { renderMine(); renderPlanTab(); throw new Error('Sack bilgisi gelmedi. Oyunda SkyBlock Menu → Settings → API Settings\'ten Inventory API\'yi aç, birkaç dakika sonra tekrar dene.'); }
     const hold = {};
     let gems = 0;
     for (const [id, n] of Object.entries(sacks)) {
@@ -2751,10 +2768,11 @@ async function fetchSacks() {
     save();
     renderSackStatus();
     renderMine();
+    renderPlanTab();
   } catch (err) {
-    status.textContent = err instanceof TypeError ? 'Hypixel\'e bağlanılamadı. İnternet bağlantını kontrol edip tekrar dene.' : err.message;
+    sackStatus(err instanceof TypeError ? 'Hypixel\'e bağlanılamadı. İnternet bağlantını kontrol edip tekrar dene.' : err.message);
   } finally {
-    btn.disabled = false;
+    btns.forEach((b) => { b.disabled = false; });
   }
 }
 
@@ -2856,6 +2874,7 @@ function refreshAll() {
   if ($('#tab-craft').classList.contains('active')) renderCraft();
   if ($('#tab-sellcraft').classList.contains('active')) renderSellCraft();
   if ($('#tab-mine').classList.contains('active')) renderMine();
+  if ($('#tab-plan').classList.contains('active')) renderPlanTab();
 }
 
 // Opens a tab and writes it into the URL hash.
@@ -2870,6 +2889,7 @@ function showTab(name, { render = true } = {}) {
     if (name === 'craft') renderCraft();
     if (name === 'sellcraft') renderSellCraft();
     if (name === 'mine') renderMine();
+    if (name === 'plan') renderPlanTab();
   }
 }
 
@@ -2967,7 +2987,7 @@ function wire() {
     }
     openDetail(id);
   });
-  $('#mineSackBtn').addEventListener('click', fetchSacks);
+  document.querySelectorAll('.sack-btn').forEach((b) => b.addEventListener('click', fetchSacks));
   $('#minePlan').addEventListener('click', planClick);
   planPickEvents();
   planAllowEvents();
@@ -2979,6 +2999,10 @@ function wire() {
   }, 20 * 1000);
   renderSackStatus();
   setInterval(() => { if ($('#mineSackStatus').dataset.live) renderSackStatus(); }, 60 * 1000);
+  $('#tab-plan').addEventListener('change', (ev) => {
+    const d = ev.target.dataset;
+    if ('planSlot' in d || 'planCount' in d) planChange(ev.target);
+  });
   $('#tab-mine').addEventListener('change', (ev) => {
     const el = ev.target, d = el.dataset;
     if (d.mine) S.mine[d.mine] = { ...S.mine[d.mine], [d.k]: Math.max(0, Math.floor(Number(el.value) || 0)) };
@@ -2988,7 +3012,6 @@ function wire() {
     }
     else if (d.mineTotal) S.mineInTotal[d.mineTotal] = el.checked;
     else if (d.refHold) S.refHold = { ...S.refHold, [d.refHold]: Math.max(0, Math.floor(Number(el.value) || 0)) };
-    else if ('planSlot' in d || 'planCount' in d) return planChange(el);
     else if ('amalgSlots' in d) amalgSlotsManual = el.value === '' ? null : Math.max(0, Math.floor(Number(el.value) || 0));
     else return;
     save(); renderMine();
@@ -3053,7 +3076,7 @@ async function main() {
   refreshAll();
   startAutoRefresh();
   // Tables are filled now (some tabs load market data first): put the page back where it was.
-  if (['npc', 'craft', 'sellcraft', 'mine'].includes(activeTab())) { try { await loadExtra(); } catch { /* tab shows it */ } }
+  if (['npc', 'craft', 'sellcraft', 'mine', 'plan'].includes(activeTab())) { try { await loadExtra(); } catch { /* tab shows it */ } }
   await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
   scrollTo(0, V.scroll[activeTab()] || 0);
   if (V.detail && recipes.some((r) => r.id === V.detail)) openDetail(V.detail);
