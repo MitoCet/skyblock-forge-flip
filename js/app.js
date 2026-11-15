@@ -1780,7 +1780,7 @@ function perfectRoute(label, product, inputs, stages) {
 // Suggests what to put into each free forge slot, lets the player change it (any forge recipe),
 // keeps the choice in the browser and lists what is needed: held, crafted from held lower forms
 // (Rough → Flawed → Fine, raw → Enchanted…), bought. Suggested: a ticked item ("Önerilecek itemler") that needs
-// nothing bought (best per hour), else Glacite Amalgamation (Mito). Forge-made inputs (Plate's Refined,
+// nothing bought (best per hour), else Glacite Amalgamation while the held Glacite covers it (Mito). Forge-made inputs (Plate's Refined,
 // Amalgamation…) are not forged here: they are held or bought. "Mod için kopyala" gives the list to
 // the Minecraft mod (/kazanc forge yukle reads it from the clipboard).
 const PLAN_PREFIX = 'MPC-PLAN1 ';
@@ -1903,12 +1903,19 @@ function forgePlan() {
       .map((id) => planSlot(id, { ...pool }))
       .filter((c) => c.profit != null && c.buys === 0)
       .sort((a, b) => b.hour - a.hour);
-    if (!cands.length && forgeRecipe(PLAN_FALLBACK)) cands.push(planSlot(PLAN_FALLBACK, { ...pool }));
+    // Amalgamation only while the held Glacite (Enchanted, or raw crafted up) covers it; missing gems are bought (Mito, 2026-11-15).
+    let glaciteShort = null;
+    if (!cands.length && forgeRecipe(PLAN_FALLBACK)) {
+      const amal = planSlot(PLAN_FALLBACK, { ...pool });
+      const short = amal.nodes.find((n) => n.bought && /GLACITE/.test(n.id));
+      if (short) glaciteShort = { id: short.id, need: short.count, have: short.have + short.made };
+      else cands.push(amal);
+    }
     const best = cands[0]?.id || '';
     const id = pick == null || (pick && !forgeRecipe(pick)) ? best : pick;
     const before = { ...pool };
     const slot = id ? planSlot(id, pool) : null;
-    out.push({ i, id, best, manual: pick != null, slot, pool: before });
+    out.push({ i, id, best, manual: pick != null, slot, pool: before, glaciteShort });
   }
   return { ...f, ids, slots: out };
 }
@@ -1964,13 +1971,13 @@ function renderPlan() {
     <p class="small muted">${plan.known
       ? `${effective().slots} slotun ${plan.busyJobs.length} tanesi dolu (son çekim), <b>${plan.freeAuto} boş slot</b>.`
       : `Forge bilgisi henüz çekilmedi, ${effective().slots} slotun hepsi boş sayıldı ("Sack'lerden çek" ile dolu slotlar düşülür).`}
-      Öneri sadece <b>önerilecek itemler</b>den yapılır: elindekiyle hiçbir şey satın almadan yapılabilenler (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır); hiçbiri olmuyorsa Glacite Amalgamation. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
+      Öneri sadece <b>önerilecek itemler</b>den yapılır: elindekiyle hiçbir şey satın almadan yapılabilenler (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır); hiçbiri olmuyorsa elindeki Glacite yettiği kadar Glacite Amalgamation (eksik gemler alınır), Glacite yetmeyen slot boş kalır. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
     <p><button type="button" class="pick-btn" data-allow-open>⚙ Önerilecek itemler <span class="badge">${planAllowed().size} seçili</span></button></p>
     <div class="controls"><label>Kaç slot için <input type="number" min="0" max="20" step="1" data-plan-count placeholder="${plan.freeAuto}" value="${fp.count ?? ''}"></label>
       <span class="muted small">Boş bırakırsan boş slot sayısı kullanılır.</span></div>`;
   if (!plan.slots.length) { box.innerHTML = head + '<p class="muted small">Boş slot yok.</p>'; return; }
   const rows = plan.slots.map((s) => `<tr><td>${s.i + 1}</td>
-      <td><button type="button" class="pick-btn" data-plan-open="${s.i}">${s.id ? esc(anyName(s.id)) : '<span class="muted">— boş —</span>'} <span class="muted">▾</span></button>${s.manual && s.slot?.buys ? ` <span class="warn">elindekiyle yapılamıyor, eksikler alınacak${s.best ? ` (öneri: ${esc(anyName(s.best))})` : ''}</span>` : ''} ${s.id && s.id === s.best ? '<span class="tag pos">öneri</span>' : s.manual ? '<span class="muted small">elle seçildi</span>' : ''}</td>
+      <td><button type="button" class="pick-btn" data-plan-open="${s.i}">${s.id ? esc(anyName(s.id)) : '<span class="muted">— boş —</span>'} <span class="muted">▾</span></button>${!s.id && s.glaciteShort ? ` <span class="warn">Glacite yetmiyor: Glacite Amalgamation için ${fmtN(s.glaciteShort.need)} ${esc(anyName(s.glaciteShort.id))} lazım, kalan Glacite'in ${fmtN(s.glaciteShort.have)} ediyor (${fmtN(s.glaciteShort.need - s.glaciteShort.have)} eksik)</span>` : ''}${s.manual && s.slot?.buys ? ` <span class="warn">elindekiyle yapılamıyor, eksikler alınacak${s.best ? ` (öneri: ${esc(anyName(s.best))})` : ''}</span>` : ''} ${s.id && s.id === s.best ? '<span class="tag pos">öneri</span>' : s.manual ? '<span class="muted small">elle seçildi</span>' : ''}</td>
       <td class="num">${s.slot ? duration(s.slot.sec) : '—'}</td>
       <td class="num ${s.slot?.profit > 0 ? 'pos' : 'neg'}">${s.slot ? coins(s.slot.profit) : '—'}</td>
       <td class="num">${s.slot?.hour == null ? '—' : coins(s.slot.hour) + '/s'}</td></tr>`).join('');
