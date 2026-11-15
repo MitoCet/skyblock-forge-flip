@@ -25,9 +25,9 @@ const DEFAULTS = {
   craftMarket: 'all', craftSort: 'save', craftDeep: false, craftOnlyCheaper: false, craftHideMissing: true,
   scMarket: 'all', scSort: 'diff', scNpc: true, scOnlyCraft: false, scHideMissing: true,
   scCalcId: '', scCalcQty: 1, scCalcUnit: 'out', gemHold: {}, gemCountLow: false,
-  metalOwnPlates: false,
+  metalOwnPlates: false, moltenForge: false, // moltenForge: Cole's perk is on (forge time −25%)
   refHold: {}, // held crafted/forged forms (Refined, Plate, key, Amalgamation…), shown apart from raw on the Mining cards
-  mine: null, mineRoute: {}, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
+  mine: null, mineInTotal: {}, mineView: 'all', // mine: { TUNGSTEN: { raw, ench }, … }
   sackFetch: null, // { profile, sig, changedAt, items, fetchedAt }: the last pull from the sacks
   forging: null, // [{ id, slot, start }]: mining-route items in the forge at the last sack pull
   forgeAll: null, // every forge job at the last sack pull, for the "done" notifications
@@ -38,6 +38,8 @@ const DEFAULTS = {
 let S = load();
 // gemHold used to hold one { tier, qty } per gemstone; now it holds an amount per tier.
 for (const [t, h] of Object.entries(S.gemHold || {})) if (h && h.tier) S.gemHold[t] = { [h.tier]: h.qty || 0 };
+// Route clicks on the Mining cards are no longer saved: the most profitable route is the default.
+delete S.mineRoute;
 // The metal tab had one amount per metal, in raw or Enchanted pieces.
 if (!S.mine) {
   S.mine = {};
@@ -74,6 +76,11 @@ if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
 const QUICK_SECONDS = 600; // forges shorter than this are capped by market demand, not time
 const qfPercent = (lvl) => (lvl <= 0 ? 0 : lvl >= 20 ? 30 : 10 + lvl * 0.5);
+// Cole's Molten Forge perk (mayor or minister): forge time −25%, added to Quick Forge (Mito, 2026-11-15:
+// a switch in the settings, off by default). The 25% and the additive stacking are from Hypixel's perk
+// text "Decrease the time it takes to forge items by 25%" as read by open-source forge tools.
+const MOLTEN_FORGE = 25;
+const forgeCut = (lvl) => qfPercent(lvl) + (S.moltenForge ? MOLTEN_FORGE : 0);
 
 // ---------- formatting ----------
 const $ = (s) => document.querySelector(s);
@@ -233,7 +240,7 @@ function thinTag(id) {
 
 function evaluate(r) {
   const { qfLevel } = effective();
-  const time = r.duration * (1 - qfPercent(qfLevel) / 100);
+  const time = r.duration * (1 - forgeCut(qfLevel) / 100);
   const inputs = r.inputs.map((i) => ({ ...i, ...buyCost(i.id, i.count) }));
   const missing = inputs.some((i) => i.total == null);
   const cost = missing ? null : inputs.reduce((s, i) => s + i.total, 0);
@@ -1334,7 +1341,7 @@ function extras(r, skip) {
 // `stages` are [jobs, seconds per job] run back to back on the forge slots.
 function metalRoute(m, label, product, n, extraCost, leftover, stages, missing) {
   const { slots, qfLevel } = effective();
-  const k = 1 - qfPercent(qfLevel) / 100;
+  const k = 1 - forgeCut(qfLevel) / 100;
   const sale = marketSell(product);
   const ok = !missing && sale.net != null && extraCost != null;
   // Enchanted left over after the last full forge is kept, never sold (counted as 0).
@@ -1429,10 +1436,11 @@ function mineCalc(m) {
     return r;
   });
   const best = rows.reduce((b, r) => (r.total != null && (r.n > 0 || r.product === m.ench) && (!b || r.total > b.total) ? r : b), null);
-  // preferRefined (Glacite, Mito 2026-11-12): the selected route is always the forge route
-  // (Amalgamation) even when another row is tagged "En kârlı"; a click on another route only lasts
-  // until the page is reloaded (not saved).
-  const pick = m.preferRefined ? mineRouteView[m.id] : S.mineRoute[m.id];
+  // The selected route is the most profitable one by default (Mito, 2026-11-15: a saved click kept
+  // e.g. Tungsten on 'Anahtar' after prices/amounts changed). A click on another route only lasts
+  // until the page is reloaded (not saved). preferRefined (Glacite, Mito 2026-11-12): the default
+  // is always the forge route (Amalgamation) even when another row is tagged "En kârlı".
+  const pick = mineRouteView[m.id];
   const chosen = rows.find((r) => r.label === pick)
     || (m.preferRefined && rows.find((r) => r.product === m.refined && r.total != null && r.n > 0)) || best
     // Not enough for even one: still the forge route (0 coins, all kept), never a sell route.
@@ -1454,7 +1462,7 @@ function craftedCalc(m) {
   return { rows, held, total: held.some((r) => r.total == null) ? null : held.reduce((t, r) => t + r.total, 0) };
 }
 
-// Route clicks for preferRefined materials, kept only for this page view.
+// Route clicks, kept only for this page view (never saved).
 const mineRouteView = {};
 
 const inTotal = (id) => S.mineInTotal[id] !== false;
@@ -1481,7 +1489,7 @@ function forgeJob(f) {
   const r = forgeRecipe(f.id);
   const count = r?.count || 1;
   const net = marketSell(f.id).net;
-  const end = r && f.start ? f.start + r.duration * 1000 * (1 - qfPercent(effective().qfLevel) / 100) : null;
+  const end = r && f.start ? f.start + r.duration * 1000 * (1 - forgeCut(effective().qfLevel) / 100) : null;
   return { ...f, count, value: net == null ? null : net * count, end };
 }
 const forgeJobs = () => (S.forging || []).map(forgeJob);
@@ -1647,7 +1655,7 @@ function mineSection(m) {
       </tr></thead>
       <tbody>${tr}</tbody>
     </table></div>
-    <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı).${m.noSell ? ' Ham ya da Enchanted satış büyük miktarda gerçekçi olmadığı için seçenek değil; son forge\'a yetmeyen kısım sende kalır ve toplama katılmaz.' : ' Son forge\'a yetmeyen Enchanted ve ham artıkları satılmaz, sende kalır ve toplama katılmaz.'}</p>`
+    <p class="muted small">Soldaki yuvarlaktan hangi yolu seçersen alttaki toplamda o sayılır (varsayılan en kârlısı; seçimin kaydedilmez, sayfa yenilenince en kârlıya döner).${m.noSell ? ' Ham ya da Enchanted satış büyük miktarda gerçekçi olmadığı için seçenek değil; son forge\'a yetmeyen kısım sende kalır ve toplama katılmaz.' : ' Son forge\'a yetmeyen Enchanted ve ham artıkları satılmaz, sende kalır ve toplama katılmaz.'}</p>`
     : '<p class="muted small">Adet yaz ya da yukarıdan "Sack\'lerden çek".</p>'}
     ${m.id === 'UMBER' || (m.id === 'TUNGSTEN' && S.mineView === 'TUNGSTEN') ? perfectSection() : ''}
     ${m.id === 'GLACITE' ? amalgSection() : ''}
@@ -1778,7 +1786,7 @@ function plateInput(id, count) {
   return { id, count, unit, total: unit == null ? null : unit * count, own };
 }
 function perfectRoute(label, product, inputs, stages) {
-  const k = 1 - qfPercent(effective().qfLevel) / 100;
+  const k = 1 - forgeCut(effective().qfLevel) / 100;
   const cost = inputs.some((i) => i.total == null) ? null : inputs.reduce((t, i) => t + i.total, 0);
   const sale = marketSell(product);
   return {
@@ -1791,12 +1799,35 @@ function perfectRoute(label, product, inputs, stages) {
 // Suggests what to put into each free forge slot, lets the player change it (any forge recipe),
 // keeps the choice in the browser and lists what is needed: held, crafted from held lower forms
 // (Rough → Flawed → Fine, raw → Enchanted…), bought. Suggested: a ticked item ("Önerilecek itemler") that needs
-// nothing bought (best per hour), else Glacite Amalgamation while the held Glacite covers it (Mito). Forge-made inputs (Plate's Refined,
+// nothing bought (best per hour; Tungsten/Umber follow the card's most profitable route), else Glacite Amalgamation while the held Glacite covers it (Mito). Forge-made inputs (Plate's Refined,
 // Amalgamation…) are not forged here: they are held or bought. "Mod için kopyala" gives the list to
 // the Minecraft mod (/kazanc forge yukle reads it from the clipboard).
 const PLAN_PREFIX = 'MPC-PLAN1 ';
-// Ticked by default in "Önerilecek itemler": Tungsten/Umber Plate, Perfect Plate, Refined Tungsten/Umber (Mito, 2026-11-14).
-const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE', 'REFINED_TUNGSTEN', 'REFINED_UMBER'];
+// Ticked by default in "Önerilecek itemler": Tungsten/Umber Plate, Perfect Plate, Refined Tungsten/Umber (Mito, 2026-11-14),
+// Tungsten/Umber Key and Skeleton Key (Mito, 2026-11-15).
+const PLAN_FIRST = ['TUNGSTEN_PLATE', 'UMBER_PLATE', 'PERFECT_PLATE', 'REFINED_TUNGSTEN', 'REFINED_UMBER', 'TUNGSTEN_KEY', 'UMBER_KEY', 'SKELETON_KEY'];
+// The keys joined the defaults later: tick them once in a list saved before that.
+if (S.planAllow && !S.planKeysAdded) S.planAllow = [...new Set([...S.planAllow, 'TUNGSTEN_KEY', 'UMBER_KEY', 'SKELETON_KEY'])];
+S.planKeysAdded = true;
+// Tungsten/Umber: the suggestion follows the Mining card's most profitable route for the held raw/Enchanted
+// (Anahtar → key, Refined → Refined, Refined → Plate → Plate when the Refined is held, else Refined first);
+// the metal's other forge items are not suggested (Mito, 2026-11-15). No raw/Enchanted held: no limit.
+// Like the card, the route item only needs the metal held (Enchanted, or Refined for the Plate); its
+// extras (Bejeweled Handle, Glacite Amalgamation) are bought. `route` maps such an item to its metal input.
+function planRouteBlock() {
+  const block = new Set(), route = new Map();
+  for (const m of MINE) {
+    if (!m.noSell || !m.key || !m.refined) continue;
+    const best = mineCalc(m).best;
+    if (!best) continue;
+    const keep = best.product === m.key ? [m.key] : best.product === m.plate ? [m.plate, m.refined] : [m.refined];
+    for (const id of [m.key, m.refined, m.plate]) if (id && !keep.includes(id)) block.add(id);
+    for (const id of keep) route.set(id, id === m.plate ? m.refined : m.ench);
+  }
+  // Skeleton Key: made from a held Perfect Plate, the Bejeweled Handle may be bought.
+  route.set('SKELETON_KEY', 'PERFECT_PLATE');
+  return { block, route };
+}
 // Mito ticks which forge items the suggestion may use ("Önerilecek itemler"); the default is the list above plus Amalgamation.
 const PLAN_FALLBACK = 'GLACITE_AMALGAMATION';
 const planAllowed = () => new Set(S.planAllow || [...PLAN_FIRST, PLAN_FALLBACK]);
@@ -1887,7 +1918,7 @@ function planSlot(id, pool) {
   }
   const held = nodes.reduce((t, n) => t + planHeldValue(n), 0);
   const sale = marketSell(id).net;
-  const sec = r.duration * (1 - qfPercent(effective().qfLevel) / 100);
+  const sec = r.duration * (1 - forgeCut(effective().qfLevel) / 100);
   const profit = sale == null || !cashOk ? null : sale * (r.count || 1) - cash - held;
   return { id, nodes, cash: cashOk ? cash : null, held, buys, sec, profit, hour: profit == null ? null : (profit / Math.max(1, sec)) * 3600 };
 }
@@ -1905,15 +1936,20 @@ function forgePlan() {
   const ids = planIds();
   const pool = planPool();
   const allowed = planAllowed();
+  const { block, route } = planRouteBlock();
   const out = [];
   for (let i = 0; i < f.free; i++) {
     const pick = fp.pick?.[i];
     // The suggestion for this slot, with what the earlier slots already used.
     // Mito: only the ticked items; one made from what is held (nothing bought), best per hour; else Glacite Amalgamation.
-    const cands = [...allowed].filter((id) => forgeRecipe(id))
+    let cands = [...allowed].filter((id) => forgeRecipe(id) && !block.has(id))
       .map((id) => planSlot(id, { ...pool }))
-      .filter((c) => c.profit != null && c.buys === 0)
+      .filter((c) => c.profit != null && (c.buys === 0 || (route.has(c.id) && !c.nodes.some((n) => n.id === route.get(c.id) && n.bought))))
       .sort((a, b) => b.hour - a.hour);
+    // Refined → Plate route: the Plate comes first when the held Refined makes it; Refined only otherwise.
+    for (const m of MINE) {
+      if (m.plate && cands.some((c) => c.id === m.plate)) cands = cands.filter((c) => c.id !== m.refined);
+    }
     // Amalgamation only while the held Glacite (Enchanted, or raw crafted up) covers it; missing gems are bought (Mito, 2026-11-15).
     let glaciteShort = null;
     if (!cands.length && forgeRecipe(PLAN_FALLBACK)) {
@@ -1982,7 +2018,7 @@ function renderPlan() {
     <p class="small muted">${plan.known
       ? `${effective().slots} slotun ${plan.busyJobs.length} tanesi dolu (son çekim), <b>${plan.freeAuto} boş slot</b>.`
       : `Forge bilgisi henüz çekilmedi, ${effective().slots} slotun hepsi boş sayıldı ("Sack'lerden çek" ile dolu slotlar düşülür).`}
-      Öneri sadece <b>önerilecek itemler</b>den yapılır: elindekiyle hiçbir şey satın almadan yapılabilenler (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır); hiçbiri olmuyorsa elindeki Glacite yettiği kadar Glacite Amalgamation (eksik gemler alınır), Glacite yetmeyen slot boş kalır. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
+      Öneri sadece <b>önerilecek itemler</b>den yapılır: elindekiyle hiçbir şey satın almadan yapılabilenler (saatlik kâra göre; elindeki malzeme satış değeriyle sayılır). Tungsten ve Umber'de Mining kartındaki en kârlı yol önerilir (Anahtar, Refined ya da Plate; Plate için Refined yoksa önce Refined), Bejeweled Handle ve Amalgamation gibi ekler alınır; hiçbiri olmuyorsa elindeki Glacite yettiği kadar Glacite Amalgamation (eksik gemler alınır), Glacite yetmeyen slot boş kalır. Değiştirmek için slottaki itemin adına bas: forge'daki her tarif listelenir (Perfect, drill, pet dahil). Seçimin bu tarayıcıda kaydedilir.</p>
     <p><button type="button" class="pick-btn" data-allow-open>⚙ Önerilecek itemler <span class="badge">${planAllowed().size} seçili</span></button></p>
     <div class="controls"><label>Kaç slot için <input type="number" min="0" max="20" step="1" data-plan-count placeholder="${plan.freeAuto}" value="${fp.count ?? ''}"></label>
       <span class="muted small">Boş bırakırsan boş slot sayısı kullanılır.</span></div>`;
@@ -2281,7 +2317,7 @@ const refHeld = (id) => Math.max(0, Math.floor(Number(S.refHold?.[id]) || 0));
 function refinedPlan() {
   const pp = forgeRecipe('PERFECT_PLATE');
   const { slots, qfLevel } = effective();
-  const k = 1 - qfPercent(qfLevel) / 100;
+  const k = 1 - forgeCut(qfLevel) / 100;
   const wall = (jobs, sec) => (jobs ? Math.ceil(jobs / Math.max(1, slots)) * sec * k : 0);
   const sum = (xs) => (xs.some((x) => x == null) ? null : xs.reduce((a, b) => a + b, 0));
   const val = (n, unit) => (n ? (unit == null ? null : n * unit) : 0);
@@ -2474,7 +2510,7 @@ function needTotals(n, acc = needAcc()) {
 function needWall(n) {
   if (!n.made || n.craft) return Math.max(0, ...(n.kids || []).map(needWall));
   const { slots, qfLevel } = effective();
-  const k = 1 - qfPercent(qfLevel) / 100;
+  const k = 1 - forgeCut(qfLevel) / 100;
   return Math.ceil(n.made / Math.max(1, slots)) * n.duration * k + Math.max(0, ...(n.kids || []).map(needWall));
 }
 // How many can be made one after another from what is held, without buying any Tungsten/Umber
@@ -2868,11 +2904,12 @@ function renderSettings() {
   const eff = effective();
   $('#slots').value = eff.slots;
   $('#qfLevel').value = eff.qfLevel;
+  $('#moltenForge').checked = !!S.moltenForge;
   $('#bzTax').value = S.bzTax;
   $('#thinVolume').value = S.thinVolume;
   $('#thinOrders').value = S.thinOrders;
   const src = !S.manualMode && S.auto ? `profil (${esc(S.auto.profileName)})` : 'elle girilen değerler';
-  $('#effectiveInfo').innerHTML = `Kullanılan: ${eff.slots} slot, Quick Forge ${eff.qfLevel} (süre −%${qfPercent(eff.qfLevel)}). Kaynak: ${src}.`
+  $('#effectiveInfo').innerHTML = `Kullanılan: ${eff.slots} slot, Quick Forge ${eff.qfLevel}${S.moltenForge ? ` + Cole Molten Forge %${MOLTEN_FORGE}` : ''} (süre −%${forgeCut(eff.qfLevel)}). Kaynak: ${src}.`
     + (S.auto ? '' : '<br>Profil henüz çekilmedi.');
   $('#playerChip').innerHTML = S.auto && !S.manualMode
     ? `${esc(S.username)} · ${esc(S.auto.profileName)}<br>HotM ${S.auto.hotmTier} · QF ${S.auto.qfLevel} · ${S.auto.slots} slot`
@@ -3025,8 +3062,7 @@ function wire() {
     const el = ev.target, d = el.dataset;
     if (d.mine) S.mine[d.mine] = { ...S.mine[d.mine], [d.k]: Math.max(0, Math.floor(Number(el.value) || 0)) };
     else if (d.route) {
-      if (MINE.find((m) => m.id === d.route)?.preferRefined) mineRouteView[d.route] = el.value;
-      else S.mineRoute[d.route] = el.value;
+      mineRouteView[d.route] = el.value;
     }
     else if (d.mineTotal) S.mineInTotal[d.mineTotal] = el.checked;
     else if (d.refHold) S.refHold = { ...S.refHold, [d.refHold]: Math.max(0, Math.floor(Number(el.value) || 0)) };
@@ -3059,6 +3095,7 @@ function wire() {
   setInterval(renderKeyBanner, 10 * 60 * 1000);
   $('#profileSelect').addEventListener('change', (ev) => applyProfile(ev.target.value));
   $('#manualMode').addEventListener('change', (ev) => { S.manualMode = ev.target.checked; save(); refreshAll(); });
+  $('#moltenForge').addEventListener('change', (ev) => { S.moltenForge = ev.target.checked; save(); refreshAll(); });
   for (const [id, key, min, max] of [['#slots', 'slots', 1, 7], ['#qfLevel', 'qfLevel', 0, 20], ['#bzTax', 'bzTax', 0, 5],
     ['#thinVolume', 'thinVolume', 0, 1e9], ['#thinOrders', 'thinOrders', 0, 1e6]]) {
     $(id).addEventListener('change', (ev) => {
