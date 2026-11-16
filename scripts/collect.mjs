@@ -2,7 +2,7 @@
 // Bazaar and Auction House APIs. Writes latest.json and appends to history/.
 // Also writes market.json (current price of every Bazaar product and every
 // AH item, no history), npc.json (NPC sell prices, refreshed daily) and
-// norm.json (each item's median price over the last 7 days).
+// norm.json (each item's median price over the last 30 days).
 // Usage: node scripts/collect.mjs <dataDir>
 // Set FIXTURE_DIR to read bazaar.json / auctions_<page>.json from disk instead (tests).
 import fs from 'node:fs';
@@ -141,9 +141,9 @@ for (const [id, v] of Object.entries(ah)) append(id, 'ah', [ts, v.lbin, v.n]);
 
 // "Normal" price of each item: the median of the last NORM_DAYS days. The site marks a
 // price that is far from it as unusually low or high. Items with a history file use it;
-// every other Bazaar product uses norm-store.json, one compact snapshot per hour.
-const NORM_DAYS = 7;
-const NORM_MIN_POINTS = 12;
+// every other Bazaar product uses norm-store.json, one compact snapshot every 4 hours.
+const NORM_DAYS = 30; // about six mayor/minister terms, so one mayor's effect isn't the normal
+const NORM_MIN_POINTS = 6;
 const normCut = ts - NORM_DAYS * 86400;
 const median = (xs) => {
   const v = xs.filter((x) => x != null && x > 0).sort((a, b) => a - b);
@@ -155,7 +155,7 @@ const storeFile = path.join(dataDir, 'norm-store.json');
 let store = [];
 try { store = JSON.parse(fs.readFileSync(storeFile, 'utf8')); } catch { /* first run */ }
 store = store.filter((s) => s.ts >= normCut);
-if (!store.length || ts - store[store.length - 1].ts >= 50 * 60) {
+if (!store.length || ts - store[store.length - 1].ts >= 4 * 3600 - 10 * 60) {
   const p = {};
   for (const [id, v] of Object.entries(bzAll)) p[id] = [v[0], v[1]];
   store.push({ ts, p });
