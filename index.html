@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Skyblock Forge Flip</title>
-  <link rel="stylesheet" href="css/style.css?v=20261104d">
+  <link rel="stylesheet" href="css/style.css?v=20261116a">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js" defer></script>
-  <script src="js/app.js?v=20261115k" defer></script>
+  <script src="js/app.js?v=20261116a" defer></script>
 </head>
 <body>
   <header class="top">
@@ -446,6 +446,11 @@
           <p class="muted small">Bazaar'da hacmi ya da order sayısı bu sınırların altında kalan itemlerin yanına <span class="tag thin">⚠ az işlem</span> yazılır; gizlenmez. Üzerine dokununca nedeni (kaç order var, haftalık hacim, sınır) görünür. Sell offer ile satarken anında alım hacmi ve sell offer sayısı, anında satarken anında satış hacmi ve buy order sayısı bakılır. 0 yazarsan o sınır kapanır.</p>
           <label>En az haftalık hacim (adet) <input id="thinVolume" type="number" min="0" step="100"></label>
           <label>En az order sayısı <input id="thinOrders" type="number" min="0" step="1"></label>
+        </div>
+        <div class="card">
+          <h3>Normalden düşük / yüksek fiyatlar</h3>
+          <p class="muted small">Şu anki fiyat son 7 günün normal (ortanca) fiyatından bu kadar saparsa itemin yanına <span class="tag thin odd-low">▼ düşük fiyat</span> ya da <span class="tag thin odd-high">▲ yüksek fiyat</span> yazılır. Üzerine dokununca şu anki fiyat, normal fiyat ve fark görünür. 0 yazarsan kapanır. Normal fiyat fiyat toplayıcının kayıtlarından hesaplanır; yeni takip edilen itemlerde en az yarım gün kayıt gerekir.</p>
+          <label>Sapma sınırı (%) <input id="oddPct" type="number" min="0" step="5"></label>
         </div>
         <div class="card">
           <h3>Elle girilen fiyatlar</h3>

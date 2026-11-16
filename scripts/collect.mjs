@@ -1,7 +1,8 @@
 // Takes one price snapshot of every forge-related item from Hypixel's public
 // Bazaar and Auction House APIs. Writes latest.json and appends to history/.
 // Also writes market.json (current price of every Bazaar product and every
-// AH item, no history) and npc.json (NPC sell prices, refreshed daily).
+// AH item, no history), npc.json (NPC sell prices, refreshed daily) and
+// norm.json (each item's median price over the last 7 days).
 // Usage: node scripts/collect.mjs <dataDir>
 // Set FIXTURE_DIR to read bazaar.json / auctions_<page>.json from disk instead (tests).
 import fs from 'node:fs';
@@ -137,5 +138,47 @@ const append = (id, market, point) => {
 };
 for (const [id, v] of Object.entries(bazaar)) append(id, 'bazaar', [ts, v.ask, v.bid]);
 for (const [id, v] of Object.entries(ah)) append(id, 'ah', [ts, v.lbin, v.n]);
+
+// "Normal" price of each item: the median of the last NORM_DAYS days. The site marks a
+// price that is far from it as unusually low or high. Items with a history file use it;
+// every other Bazaar product uses norm-store.json, one compact snapshot per hour.
+const NORM_DAYS = 7;
+const NORM_MIN_POINTS = 12;
+const normCut = ts - NORM_DAYS * 86400;
+const median = (xs) => {
+  const v = xs.filter((x) => x != null && x > 0).sort((a, b) => a - b);
+  if (v.length < NORM_MIN_POINTS) return null;
+  const m = v.length >> 1;
+  return round(v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2);
+};
+const storeFile = path.join(dataDir, 'norm-store.json');
+let store = [];
+try { store = JSON.parse(fs.readFileSync(storeFile, 'utf8')); } catch { /* first run */ }
+store = store.filter((s) => s.ts >= normCut);
+if (!store.length || ts - store[store.length - 1].ts >= 50 * 60) {
+  const p = {};
+  for (const [id, v] of Object.entries(bzAll)) p[id] = [v[0], v[1]];
+  store.push({ ts, p });
+}
+fs.writeFileSync(storeFile, JSON.stringify(store));
+const norm = { ts, days: NORM_DAYS, bz: {}, ah: {} };
+for (const id of Object.keys(bzAll)) {
+  const pts = store.map((s) => s.p[id]).filter(Boolean);
+  const a = median(pts.map((x) => x[0])), b = median(pts.map((x) => x[1]));
+  if (a != null || b != null) norm.bz[id] = [a, b];
+}
+for (const f of fs.readdirSync(histDir)) {
+  let h;
+  try { h = JSON.parse(fs.readFileSync(path.join(histDir, f), 'utf8')); } catch { continue; }
+  const pts = h.points.filter((x) => x[0] >= normCut);
+  if (h.market === 'bazaar') {
+    const a = median(pts.map((x) => x[1])), b = median(pts.map((x) => x[2]));
+    if (a != null || b != null) norm.bz[h.id] = [a, b];
+  } else if (h.market === 'ah') {
+    const l = median(pts.map((x) => x[1]));
+    if (l != null) norm.ah[h.id] = l;
+  }
+}
+fs.writeFileSync(path.join(dataDir, 'norm.json'), JSON.stringify(norm));
 
 console.log(`snapshot ${new Date(ts * 1000).toISOString()}: ${Object.keys(bazaar).length} bazaar, ${Object.keys(ah).length} AH items, ${pages.length} AH pages`);
