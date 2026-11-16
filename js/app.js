@@ -17,6 +17,7 @@ const DEFAULTS = {
   auto: null, // { slots, qfLevel, hotmTier, profileName, fetchedAt }
   manualMode: false, slots: 2, qfLevel: 0, bzTax: 1.25,
   thinVolume: 1000, thinOrders: 5, // Bazaar items under these are marked "az işlem" (0 turns a limit off)
+  oddPct: 5, // a price this many % away from its normal (median of terms without Cole) is marked "düşük/yüksek fiyat" (0 = off)
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
@@ -103,7 +104,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 const safeName = (id) => id.replace(/[^A-Za-z0-9_-]/g, '-');
 
 // ---------- data ----------
-let recipes = [], names = {}, latest = null;
+let recipes = [], names = {}, latest = null, norm = null;
 const histCache = new Map();
 
 async function getJson(url) {
@@ -114,6 +115,7 @@ async function getJson(url) {
 async function loadData() {
   const [r, l] = await Promise.all([getJson(DATA_URL + 'recipes.json'), getJson(DATA_URL + 'latest.json')]);
   recipes = r.recipes; names = r.names; latest = l;
+  norm = await getJson(DATA_URL + 'norm.json').catch(() => null);
 }
 function priceHistory(id) {
   if (!histCache.has(id)) {
@@ -232,10 +234,53 @@ function thinInfo(id) {
     instant ? 'Anında satışta buy orderlara satıyorsun; hacim anında satış tarafından.' : 'Sell offer ile satışta alıcılar anında alımla gelir; hacim anında alım tarafından.');
   return lines.join('\n');
 }
-// The tag shown next to a Bazaar item; tap or hover shows why.
-function thinTag(id) {
+// ---------- unusual prices ----------
+// The collector writes norm.json: each item's normal price, the median of past terms without
+// Cole as mayor or minister (Cole lowers mining prices), else of the last 30 days.
+// A current price far from it (a crash, a manipulated sell offer…) gets a
+// "düşük fiyat" / "yüksek fiyat" tag, so a profit built on it isn't trusted blindly.
+// `buy`: the price is paid for an input (buy mode decides the side), else it is a sale.
+function oddInfo(id, buy = false) {
+  if (!norm || !(S.oddPct > 0) || S.overrides?.[id] != null) return null;
+  const l = latest?.bazaar?.[id], m = market?.bz?.[id];
+  let cur, base, side, basis;
+  if (norm.bz?.[id] && (l || m)) {
+    const ask = l?.ask ?? m?.[0], bid = l?.bid ?? m?.[1];
+    const useAsk = buy ? S.buyMode === 'instant' : S.sellMode !== 'instant';
+    cur = useAsk ? ask : bid;
+    base = norm.bz[id][useAsk ? 0 : 1];
+    side = useAsk ? 'anında alım / sell offer fiyatı' : 'anında satış / buy order fiyatı';
+    basis = norm.bzBasis?.[id];
+  } else if (norm.ah?.[id]) {
+    cur = latest?.ah?.[id]?.lbin ?? market?.ah?.[id]?.[0];
+    base = norm.ah[id];
+    side = 'AH lowest BIN';
+    basis = norm.ahBasis?.[id];
+  }
+  if (!(cur > 0) || !(base > 0)) return null;
+  const pct = (cur / base - 1) * 100;
+  if (Math.abs(pct) < S.oddPct) return null;
+  const low = pct < 0;
+  const tip = [
+    `Şu anki ${side}: ${coins(cur)}`,
+    `Normal fiyat: ${coins(base)}`,
+    `Neye göre: ${norm.basis?.[basis] || `son ${norm.days || 30} gün`}${norm.bzTerms?.[id] && basis != null && basis < norm.basis.length - 1 ? ` (${norm.bzTerms[id]} dönem)` : ''}`,
+    ...(norm.mayor ? [`Şu an: Mayor ${norm.mayor}${norm.minister ? `, minister ${norm.minister}` : ''}`
+      + (norm.mayor === 'Cole' || norm.minister === 'Cole' ? " (Cole varken mining fiyatları genelde düşük olur)" : '')] : []),
+    `Fark: ${low ? '−' : '+'}%${Math.abs(pct).toFixed(0)} (sınır %${S.oddPct}, Profil ve ayarlar).`,
+    low ? (buy ? 'Almak için iyi an olabilir; ama fiyat yeni bir seviyeye inmiş de olabilir.' : 'Şimdi satmak normalden az getirir; kâr olduğundan düşük görünüyor olabilir.')
+      : (buy ? 'Almak normalden pahalı; maliyet olduğundan yüksek görünüyor olabilir.' : 'Kâr bu yüksek fiyata dayanıyor olabilir; fiyat kısa sürede normale dönebilir.'),
+  ].join('\n');
+  return { low, tip };
+}
+function oddTag(id, buy = false) {
+  const o = oddInfo(id, buy);
+  return o ? ` <span class="tag thin ${o.low ? 'odd-low' : 'odd-high'}" tabindex="0" title="${esc(o.tip)}" data-tip="${esc(o.tip)}">${o.low ? '▼ düşük fiyat' : '▲ yüksek fiyat'}</span>` : '';
+}
+// The tags shown next to a Bazaar item ("az işlem", unusual price); tap or hover shows why.
+function thinTag(id, buy = false) {
   const tip = thinInfo(id);
-  return tip ? ` <span class="tag thin" tabindex="0" title="${esc(tip)}" data-tip="${esc(tip)}">⚠ az işlem</span>` : '';
+  return (tip ? ` <span class="tag thin" tabindex="0" title="${esc(tip)}" data-tip="${esc(tip)}">⚠ az işlem</span>` : '') + oddTag(id, buy);
 }
 
 function evaluate(r) {
@@ -733,6 +778,7 @@ async function autoRefresh() {
       const m = market ? await getJson(DATA_URL + 'market.json') : null;
       latest = l;
       if (m) market = m;
+      norm = await getJson(DATA_URL + 'norm.json').catch(() => norm);
       histCache.clear();
       liveAt = null;
       autoPending = true;
@@ -1047,7 +1093,7 @@ function sellCraftDetail(e) {
     ${c.count > 1 ? `<p class="small muted">Bir craft ${c.count} adet verir; malzeme değeri adet başına bölündü.</p>` : ''}
     ${e.alts > 1 ? `<p class="small muted">Bu itemin ${e.alts} tarifi var; craftlamanın en kârlı olduğu gösteriliyor.</p>` : ''}
     <table><thead><tr><th>Malzeme (1 craft)</th><th class="num">Adet</th><th class="num">Birim (net)</th><th class="num">Toplam (net)</th><th>Nereye</th></tr></thead>
-    <tbody>${e.inputs.map((i) => `<tr><td>${esc(anyName(i.id))}${i.where === 'bazaar' ? thinTag(i.id) : ''}</td><td class="num">${i.count.toLocaleString('tr-TR')}</td>
+    <tbody>${e.inputs.map((i) => `<tr><td>${esc(anyName(i.id))}${i.where === 'bazaar' ? thinTag(i.id, true) : ''}</td><td class="num">${i.count.toLocaleString('tr-TR')}</td>
       <td class="num">${coins(i.unit)}</td><td class="num">${coins(i.total)}</td>
       <td>${i.unit == null ? '<span class="tag">fiyat yok</span>' : `<span class="tag">${WHERE_LABEL[i.where]}</span> <span class="muted small">${tax(i.where)}</span>`}</td></tr>`).join('')}
       <tr><td><b>Çıktı:</b> ${esc(e.name)}</td><td class="num">${c.count}</td><td class="num">${coins(e.out.net)}</td><td class="num">${coins(e.out.net == null ? null : e.out.net * c.count)}</td>
@@ -2708,7 +2754,7 @@ function perfectSection() {
     const cls = r.profit == null ? '' : r.profit >= 0 ? 'pos' : 'neg';
     const ins = r.inputs.map((i) => `${i.count}× ${esc(anyName(i.id))} (${coins(i.unit)}${i.own ? ', senin' : ''})`).join('<br>');
     return `<tr>
-      <td>${esc(r.label)}${r === cheaper ? ' <span class="tag pos">Daha ucuz</span>' : ''}${thinTag(r.product)}</td>
+      <td>${esc(r.label)}${r === cheaper ? ' <span class="tag pos">Daha ucuz</span>' : ''}${thinTag(r.product, true)}</td>
       <td class="small">${ins}</td>
       <td class="num${r === cheaper ? ' best' : ''}">${coins(r.cost)}</td>
       <td class="num">${coins(r.sale)}</td>
@@ -2985,6 +3031,7 @@ function renderSettings() {
   $('#bzTax').value = S.bzTax;
   $('#thinVolume').value = S.thinVolume;
   $('#thinOrders').value = S.thinOrders;
+  $('#oddPct').value = S.oddPct;
   const src = !S.manualMode && S.auto ? `profil (${esc(S.auto.profileName)})` : 'elle girilen değerler';
   $('#effectiveInfo').innerHTML = `Kullanılan: ${eff.slots} slot, Quick Forge ${eff.qfLevel}${S.moltenForge ? ` + Cole Molten Forge %${MOLTEN_FORGE}` : ''} (süre −%${forgeCut(eff.qfLevel)}). Kaynak: ${src}.`
     + (S.auto ? '' : '<br>Profil henüz çekilmedi.');
@@ -3174,7 +3221,7 @@ function wire() {
   $('#manualMode').addEventListener('change', (ev) => { S.manualMode = ev.target.checked; save(); refreshAll(); });
   $('#moltenForge').addEventListener('change', (ev) => { S.moltenForge = ev.target.checked; save(); refreshAll(); });
   for (const [id, key, min, max] of [['#slots', 'slots', 1, 7], ['#qfLevel', 'qfLevel', 0, 20], ['#bzTax', 'bzTax', 0, 5],
-    ['#thinVolume', 'thinVolume', 0, 1e9], ['#thinOrders', 'thinOrders', 0, 1e6]]) {
+    ['#thinVolume', 'thinVolume', 0, 1e9], ['#thinOrders', 'thinOrders', 0, 1e6], ['#oddPct', 'oddPct', 0, 1000]]) {
     $(id).addEventListener('change', (ev) => {
       const v = Math.min(max, Math.max(min, Number(ev.target.value) || 0));
       // Typing a slot or Quick Forge value means the user wants their own numbers.
