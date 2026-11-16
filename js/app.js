@@ -17,7 +17,7 @@ const DEFAULTS = {
   auto: null, // { slots, qfLevel, hotmTier, profileName, fetchedAt }
   manualMode: false, slots: 2, qfLevel: 0, bzTax: 1.25,
   thinVolume: 1000, thinOrders: 5, // Bazaar items under these are marked "az işlem" (0 turns a limit off)
-  oddPct: 5, // a price this many % away from its normal (same-mayor median) is marked "düşük/yüksek fiyat" (0 = off)
+  oddPct: 5, // a price this many % away from its normal (median of terms without Cole) is marked "düşük/yüksek fiyat" (0 = off)
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
@@ -235,8 +235,8 @@ function thinInfo(id) {
   return lines.join('\n');
 }
 // ---------- unusual prices ----------
-// The collector writes norm.json: each item's normal price, the median of past terms with the
-// same mayor + minister (else the same mayor, else the last 30 days); mayors move prices a lot.
+// The collector writes norm.json: each item's normal price, the median of past terms without
+// Cole as mayor or minister (Cole lowers mining prices), else of the last 30 days.
 // A current price far from it (a crash, a manipulated sell offer…) gets a
 // "düşük fiyat" / "yüksek fiyat" tag, so a profit built on it isn't trusted blindly.
 // `buy`: the price is paid for an input (buy mode decides the side), else it is a sale.
@@ -265,7 +265,8 @@ function oddInfo(id, buy = false) {
     `Şu anki ${side}: ${coins(cur)}`,
     `Normal fiyat: ${coins(base)}`,
     `Neye göre: ${norm.basis?.[basis] || `son ${norm.days || 30} gün`}${norm.bzTerms?.[id] && basis != null && basis < norm.basis.length - 1 ? ` (${norm.bzTerms[id]} dönem)` : ''}`,
-    ...(norm.mayor ? [`Şu an: Mayor ${norm.mayor}${norm.minister ? `, minister ${norm.minister}` : ''}`] : []),
+    ...(norm.mayor ? [`Şu an: Mayor ${norm.mayor}${norm.minister ? `, minister ${norm.minister}` : ''}`
+      + (norm.mayor === 'Cole' || norm.minister === 'Cole' ? " (Cole varken mining fiyatları genelde düşük olur)" : '')] : []),
     `Fark: ${low ? '−' : '+'}%${Math.abs(pct).toFixed(0)} (sınır %${S.oddPct}, Profil ve ayarlar).`,
     low ? (buy ? 'Almak için iyi an olabilir; ama fiyat yeni bir seviyeye inmiş de olabilir.' : 'Şimdi satmak normalden az getirir; kâr olduğundan düşük görünüyor olabilir.')
       : (buy ? 'Almak normalden pahalı; maliyet olduğundan yüksek görünüyor olabilir.' : 'Kâr bu yüksek fiyata dayanıyor olabilir; fiyat kısa sürede normale dönebilir.'),

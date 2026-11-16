@@ -142,7 +142,7 @@ for (const [id, v] of Object.entries(ah)) append(id, 'ah', [ts, v.lbin, v.n]);
 // ---------- "normal" prices, by mayor ----------
 // The site marks a price far from its normal as unusually low or high. Mayors and
 // ministers move prices (Cole lowers mining prices), so the normal is taken from past
-// terms with the same mayor + minister (else the same mayor, else the last NORM_DAYS).
+// terms without Cole as mayor or minister (else the last NORM_DAYS).
 // A term starts when an election ends (Late Spring 27) and lasts one SkyBlock year (124 h).
 // Price points: an item's history file if it has one, else norm-store.json, a compact
 // snapshot of every Bazaar product every 4 hours.
@@ -239,13 +239,10 @@ fs.writeFileSync(termsFile, JSON.stringify(terms));
 // norm.json: per item [ask, bid] (bz) or lbin (ah), plus which basis it came from.
 const recent = medians(normCut, ts + 1);
 const norm = { ts, days: NORM_DAYS, mayor: terms.cur?.mayor || null, minister: terms.cur?.minister || null, basis: [], bz: {}, ah: {}, bzBasis: {}, ahBasis: {} };
-const groups = [];
-if (terms.cur) {
-  const same = terms.past.filter((t) => t.mayor === terms.cur.mayor && t.minister === terms.cur.minister);
-  const sameMayor = terms.past.filter((t) => t.mayor === terms.cur.mayor);
-  if (same.length) groups.push([same, `Mayor ${terms.cur.mayor} + minister ${terms.cur.minister || '?'} dönemleri`]);
-  if (sameMayor.length > same.length) groups.push([sameMayor, `Mayor ${terms.cur.mayor} dönemleri (minister farklı)`]);
-}
+// Mito (2026-11-16): the normal price is the price when Cole is neither mayor nor minister;
+// Cole (Mining Fiesta, Prospection…) pulls mining prices down while he is in office.
+const noCole = terms.past.filter((t) => t.mayor !== 'Cole' && t.minister !== 'Cole');
+const groups = noCole.length ? [[noCole, "Cole'un olmadığı dönemler"]] : [];
 const medianOfTerms = (list, f) => median(list.map(f), 1);
 for (const [list, label] of groups) {
   for (const id of new Set(list.flatMap((t) => Object.keys(t.bz)))) {
@@ -268,7 +265,7 @@ for (const [list, label] of groups) {
   norm.basis.push(label);
 }
 const fallback = norm.basis.length;
-norm.basis.push(`son ${NORM_DAYS} gün (bu mayorla eski kayıt yok)`);
+norm.basis.push(`son ${NORM_DAYS} gün (Cole'suz dönem kaydı yok)`);
 for (const [id, v] of Object.entries(recent.bz)) if (!norm.bz[id]) { norm.bz[id] = v; norm.bzBasis[id] = fallback; }
 for (const [id, v] of Object.entries(recent.ah)) if (norm.ah[id] == null) { norm.ah[id] = v; norm.ahBasis[id] = fallback; }
 fs.writeFileSync(path.join(dataDir, 'norm.json'), JSON.stringify(norm));
