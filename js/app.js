@@ -17,7 +17,7 @@ const DEFAULTS = {
   auto: null, // { slots, qfLevel, hotmTier, profileName, fetchedAt }
   manualMode: false, slots: 2, qfLevel: 0, bzTax: 1.25,
   thinVolume: 1000, thinOrders: 5, // Bazaar items under these are marked "az işlem" (0 turns a limit off)
-  oddPct: 25, // a price this many % away from its 7-day median is marked "düşük/yüksek fiyat" (0 = off)
+  oddPct: 10, // a price this many % away from its recent (3-day) median is marked "düşük/yüksek fiyat" (0 = off)
   market: 'all', sort: 'hour', hideMissing: true, hideLoss: false, showQuick: false,
   buyMode: 'instant', sellMode: 'offer', // Bazaar: instant buy | buy order, sell offer | instant sell
   compare: [], overrides: {}, range: 7,
@@ -235,7 +235,7 @@ function thinInfo(id) {
   return lines.join('\n');
 }
 // ---------- unusual prices ----------
-// The collector writes norm.json: each item's median price over the last 7 days.
+// The collector writes norm.json: each item's median price over the last 3 days.
 // A current price far from it (a crash, a manipulated sell offer…) gets a
 // "düşük fiyat" / "yüksek fiyat" tag, so a profit built on it isn't trusted blindly.
 // `buy`: the price is paid for an input (buy mode decides the side), else it is a sale.
@@ -260,7 +260,7 @@ function oddInfo(id, buy = false) {
   const low = pct < 0;
   const tip = [
     `Şu anki ${side}: ${coins(cur)}`,
-    `Son ${norm.days || 7} günün normali (ortanca): ${coins(base)}`,
+    `Son ${norm.days || 3} günün normali (ortanca): ${coins(base)}`,
     `Fark: ${low ? '−' : '+'}%${Math.abs(pct).toFixed(0)} (sınır %${S.oddPct}, Profil ve ayarlar).`,
     low ? (buy ? 'Almak için iyi an olabilir; ama fiyat yeni bir seviyeye inmiş de olabilir.' : 'Şimdi satmak normalden az getirir; kâr olduğundan düşük görünüyor olabilir.')
       : (buy ? 'Almak normalden pahalı; maliyet olduğundan yüksek görünüyor olabilir.' : 'Kâr bu yüksek fiyata dayanıyor olabilir; fiyat kısa sürede normale dönebilir.'),
