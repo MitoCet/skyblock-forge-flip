@@ -152,8 +152,20 @@ const TERM_OFFSET = (2 * 31 + 26) * 1200; // Late Spring 27, 20 min per SkyBlock
 const termYear = (t) => Math.floor((t - SB_EPOCH - TERM_OFFSET) / SB_YEAR) + 1;
 const termStart = (y) => SB_EPOCH + (y - 1) * SB_YEAR + TERM_OFFSET;
 // Past terms whose mayor/minister we learned elsewhere (the API only gives the current one).
+// From Coflnet's mayor history (Mito, 2026-11-16). Coflnet numbers a term by its election
+// year, one less than the year here (its 525 = our 526, started 2026-11-15 11:15 UTC).
 // year: [mayor, minister]
-const KNOWN_TERMS = {};
+const KNOWN_TERMS = {
+  517: ['Cole', 'Diana'],
+  518: ['Foxy', 'Marina'],
+  519: ['Cole', 'Paul'],
+  520: ['Finnegan', 'Diaz'],
+  521: ['Jerry', null],
+  522: ['Diaz', 'Cole'],
+  523: ['Foxy', 'Aatrox'],
+  524: ['Cole', 'Paul'],
+  525: ['Finnegan', 'Foxy'],
+};
 const NORM_DAYS = 30;
 const NORM_MIN_POINTS = 6;
 const TERMS_KEEP = 70; // about a year of terms
