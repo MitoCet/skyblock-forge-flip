@@ -215,7 +215,8 @@ const termsFile = path.join(dataDir, 'terms.json');
 const terms = readJson(termsFile, { cur: null, past: [] });
 const nowYear = termYear(ts);
 try {
-  const el = await getJson('election', `${API}/election`);
+  // Election is a resources endpoint (/v2/resources/skyblock/election), not /v2/skyblock/election (404).
+  const el = await getJson('election', 'https://api.hypixel.net/v2/resources/skyblock/election');
   const mayor = el.mayor?.name || null, minister = el.mayor?.minister?.name || null;
   if (mayor) terms.cur = { year: nowYear, mayor, minister };
 } catch (e) {
