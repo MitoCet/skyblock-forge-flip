@@ -1533,7 +1533,10 @@ function mineCalc(m) {
   const chosen = rows.find((r) => r.label === pick)
     || (m.preferRefined && rows.find((r) => r.product === m.refined && r.total != null && r.n > 0)) || best
     // Not enough for even one: still the forge route (0 coins, all kept), never a sell route.
-    || (m.preferRefined && rows.find((r) => r.product === m.refined)) || null;
+    || (m.preferRefined && rows.find((r) => r.product === m.refined))
+    // Same for the other materials (Tungsten, Umber, Hard Stone, ores): the route that needs the least,
+    // so the total says what is missing ('… için yetmiyor') instead of a missing price.
+    || rows.filter((r) => r.per && r.n === 0 && r.product !== m.raw && r.product !== m.ench).sort((a, b) => a.per - b.per)[0] || null;
   return { raw, ench, whole, rawLeft, rows, best, chosen, has: raw > 0 || ench > 0 };
 }
 
@@ -1866,7 +1869,7 @@ async function renderMine() {
   renderForging();
   renderMineTotal();
   $('#metalNote').textContent = 'Tarifler NotEnoughUpdates verisinden: anahtar, Refined ve Glacite Amalgamation doğrudan Enchanted malzemeden, Plate ise Refined + Glacite Amalgamation ile forgelanır. Ek malzemeler (Bejeweled Handle, Glacite Amalgamation, Fine gemler…) satın alınmış sayılır. '
-    + `Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). Bir sonraki ürüne yetmeyen miktar Enchanted (ya da ham) olarak satılmış sayılır. `
+    + `Bazaar satışından %${S.bzTax} vergi düşüldü (ayarlardan değişir). Bir sonraki ürüne yetmeyen miktar satılmaz, sende kalır (toplama katılmaz). `
     + 'Plate süresine önce Refined forgeları, sonra Plate forgeları dahildir.';
 }
 
